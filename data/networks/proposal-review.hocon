@@ -1,0 +1,25 @@
+# The first agent assembles the specialist drafts.
+metadata {
+  title = "Proposal review"
+  description = "Prepare a short review of a supplied proposal for an officer."
+}
+tools = [
+  {
+    name = "coordinator"
+    function { description = "Review editor" }
+    instructions = "Combine the specialist drafts. Distinguish reported facts from questions for the officer."
+    tools = ["cost", "delivery"]
+  }
+  {
+    name = "cost"
+    function { description = "Cost analyst" }
+    instructions = "Summarize the stated price and quantities. Flag missing financial assumptions."
+    tools = []
+  }
+  {
+    name = "delivery"
+    function { description = "Delivery analyst" }
+    instructions = "Identify the proposed dates and any missing delivery commitments."
+    tools = []
+  }
+]

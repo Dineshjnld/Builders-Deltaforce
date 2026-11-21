@@ -1,0 +1,58 @@
+{
+  "engine": "sherpa-onnx 1.12.39",
+  "environment": "Windows AMD64 CPU, 2 inference threads",
+  "recordedAt": "2026-11-21T20:10:19+00:00",
+  "method": "One excerpt per language. Both systems get the reference language and identical 16 kHz audio. Timings are median warm decode times over three repetitions after one warm-up. Model initialization is excluded. WER uses NFC, case folding, punctuation removal and whitespace tokenization.",
+  "samples": [
+    {
+      "id": "hi",
+      "language": "Hindi",
+      "reference": "मीडियम में सर आपको लगभग नियर अबाउट चालीस पचास हजार में ठीक ठाक में मिल जाएगा",
+      "baseline": {
+        "model": "Whisper Tiny multilingual INT8",
+        "hypothesis": "Mediae me sarapo love ag near av out, jalice pa jalice ma j",
+        "wer": 1.0,
+        "wordErrors": 16,
+        "referenceWords": 16,
+        "elapsedMs": 384.5
+      },
+      "routed": {
+        "model": "Hindi IndicConformer INT8",
+        "hypothesis": "मीडियम में सर आपको लगभग नियर अब आउट चालीस पचास हज़ार में ठीक ठाक में मिल जाएगा",
+        "wer": 0.1875,
+        "wordErrors": 3,
+        "referenceWords": 16,
+        "elapsedMs": 307.9
+      }
+    },
+    {
+      "id": "te",
+      "language": "Telugu",
+      "reference": "అయితే మనకు ప్రాసెస్ ఏముంటది అది డాక్యుమెంట్స్ ఏమేమి నీడ్ ఉంటాయి మనకు",
+      "baseline": {
+        "model": "Whisper Tiny multilingual INT8",
+        "hypothesis": "ai temanaku pratsu se monta se di daa kumensu i ni runtemanaku",
+        "wer": 1.2,
+        "wordErrors": 12,
+        "referenceWords": 10,
+        "elapsedMs": 494.7
+      },
+      "routed": {
+        "model": "Telugu IndicConformer INT8",
+        "hypothesis": "అయితే మనకు ప్రాసెస్ ఏమ ఉంటందిది డాక్యూమెంట్స్ ఏమే నీడు ఉంటాయి మనకు",
+        "wer": 0.5,
+        "wordErrors": 5,
+        "referenceWords": 10,
+        "elapsedMs": 436.0
+      },
+      "androidWhisper": {
+        "model": "Telugu Whisper Tiny INT8",
+        "hypothesis": "",
+        "wer": 1.0,
+        "wordErrors": 10,
+        "referenceWords": 10,
+        "elapsedMs": 492.9
+      }
+    }
+  ]
+}

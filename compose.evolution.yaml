@@ -1,0 +1,96 @@
+services:
+  fieldos:
+    environment:
+      EVOLUTION_APPROVAL_KEY: ${EVOLUTION_APPROVAL_KEY:?Run scripts/evolution-demo.ps1}
+      WHATSAPP_CASE_ORG: ${WHATSAPP_CASE_ORG:-studio-demo}
+      WHATSAPP_CASE_DEPARTMENT: ${WHATSAPP_CASE_DEPARTMENT:-Program operations}
+      EVOLUTION_CONNECTOR_URL: http://whatsapp:8788
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8787/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  whatsapp:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/whatsapp.Dockerfile
+      additional_contexts:
+        wheels: ${EVOLUTION_WHEEL_CONTEXT:-./services/whatsapp}
+    restart: unless-stopped
+    depends_on:
+      fieldos:
+        condition: service_healthy
+    environment:
+      DB_PATH: /data/fieldos.sqlite
+      WHATSAPP_CASE_ORG: ${WHATSAPP_CASE_ORG:-studio-demo}
+      WHATSAPP_CASE_DEPARTMENT: ${WHATSAPP_CASE_DEPARTMENT:-Program operations}
+      EVOLUTION_URL: http://evolution:8080
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?Run scripts/evolution-demo.ps1}
+      EVOLUTION_WEBHOOK_KEY: ${EVOLUTION_WEBHOOK_KEY:?Run scripts/evolution-demo.ps1}
+      EVOLUTION_APPROVAL_KEY: ${EVOLUTION_APPROVAL_KEY:?Run scripts/evolution-demo.ps1}
+    volumes:
+      - fieldos_data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8788/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  evolution:
+    image: evoapicloud/evolution-api:v2.3.7@sha256:1bd8afc4a6cf48822e6cf02469aeae7bd35a12a6b616eacd1291926307f4d339
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      whatsapp:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:8080:8080'
+    environment:
+      SERVER_URL: http://127.0.0.1:8080
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?Run scripts/evolution-demo.ps1}
+      AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: 'false'
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:${EVOLUTION_DB_PASSWORD:?Run scripts/evolution-demo.ps1}@postgres:5432/evolution?schema=evolution
+      DATABASE_CONNECTION_CLIENT_NAME: deltaforce
+      DATABASE_SAVE_DATA_HISTORIC: 'false'
+      CACHE_REDIS_ENABLED: 'true'
+      CACHE_REDIS_URI: redis://redis:6379/6
+      CACHE_REDIS_PREFIX_KEY: deltaforce
+      CACHE_LOCAL_ENABLED: 'false'
+      TELEMETRY: 'false'
+      LOG_LEVEL: ERROR,WARN
+    volumes:
+      - evolution_instances:/evolution/instances
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8080/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: evolution
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: ${EVOLUTION_DB_PASSWORD:?Run scripts/evolution-demo.ps1}
+    volumes:
+      - evolution_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "evolution", "-d", "evolution"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+volumes:
+  evolution_instances:
+  evolution_postgres:
+

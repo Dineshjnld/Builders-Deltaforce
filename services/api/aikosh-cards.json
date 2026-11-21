@@ -1,0 +1,27 @@
+{
+  "publisher": "IndiaAI AIKosh",
+  "retrievedAt": "2026-11-21T20:08:03.515Z",
+  "entries": [
+    {
+      "id": "indicvoices_r",
+      "title": "IndicVoices-R",
+      "license": "Attribution-No Derivatives 4.0 International (CC BY-ND 4.0)",
+      "source": "https://aikosh.indiaai.gov.in/home/datasets/details/indicvoices_r.html",
+      "use": "Speech synthesis"
+    },
+    {
+      "id": "indicsynth",
+      "title": "IndicSynth",
+      "license": "Creative Commons Attribution Non Commercial 4.0",
+      "source": "https://aikosh.indiaai.gov.in/home/datasets/details/indicsynth.html",
+      "use": "Speech evaluation"
+    },
+    {
+      "id": "multilingual_table_detection",
+      "title": "Multilingual Table Detection",
+      "license": "CC0 1.0 Public Domain",
+      "source": "https://aikosh.indiaai.gov.in/home/datasets/details/multilingual_table_detection.html",
+      "use": "Document evaluation"
+    }
+  ]
+}

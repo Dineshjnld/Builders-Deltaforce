@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <application android:usesCleartextTraffic="true" tools:replace="android:usesCleartextTraffic"/>
+    <instrumentation android:name=".ModelSmoke" android:targetPackage="org.deltaforce.fieldos" />
+    <instrumentation android:name=".VoiceSmoke" android:targetPackage="org.deltaforce.fieldos" />
+    <instrumentation android:name=".VoiceAudioSmoke" android:targetPackage="org.deltaforce.fieldos" />
+    <instrumentation android:name=".RegionalSmoke" android:targetPackage="org.deltaforce.fieldos" />
+</manifest>

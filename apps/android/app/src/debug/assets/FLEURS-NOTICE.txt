@@ -1,0 +1,6 @@
+The Telugu and Hindi WAV fixtures are from Google's FLEURS dataset, licensed CC BY 4.0.
+Dataset: https://huggingface.co/datasets/google/fleurs
+License: https://creativecommons.org/licenses/by/4.0/
+Telugu test clip: te_in/test/6264507256679270751.wav
+Hindi test clip: hi_in/test/16976841982852749134.wav
+The fixtures are stored unmodified. The Android smoke test converts them to PCM16 and concatenates them with an English synthetic clip and short silences.

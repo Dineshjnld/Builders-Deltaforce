@@ -1,0 +1,7 @@
+# Security boundaries
+
+Use synthetic records with this build. The API resolves roles and tenant scope from hashed, expiring sessions. Passwords are individually salted and hashed with scrypt. Reports, evidence and audit queries enforce tenant and department scope, and officer queries add ownership checks. Report mutations and audit writes are transactional. Audit records are append-only through the API. An administrator with database access can change the underlying data.
+
+The Android vault uses AES-GCM and Android Keystore. Active microphone capture uses an app-private temporary file that is deleted after sealing the recording. Only the reviewed report fields, original transcript, JPEG and device label go to the configured workspace on sync. The app runs platform speech recognition only through the on-device interface when available. Pattern-based detection can miss identifiers, and the officer can edit the transcript before syncing.
+
+Protect the server's SQLite file and backups using host volume encryption and filesystem permissions. Use HTTPS for remote traffic. The demonstration database and shared synthetic passwords are intended for isolated demos. Server sessions expire after 12 hours. The current in-memory login throttle is process-local. The JPEG gate checks format markers and size. Production ingestion would need full decoding and policy-specific content checks.

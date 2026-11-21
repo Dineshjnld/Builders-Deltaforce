@@ -1,0 +1,4 @@
+Whisper Telugu Tiny was fine-tuned by vasista22 (Speech Lab, IIT Madras).
+Source model: https://huggingface.co/vasista22/whisper-telugu-tiny
+INT8 ONNX export: https://huggingface.co/ippocode/indic-asr-onnx/tree/1f6243ec6dffc4de2db84fe1446576d1ff52c252/models/whisper-tiny-te
+The source model and export are Apache-2.0. See ../LICENSE-sherpa-onnx.txt for a copy of Apache-2.0 and ../LICENSE-whisper.txt for the base Whisper notice.

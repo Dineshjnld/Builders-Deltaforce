@@ -1,0 +1,38 @@
+{
+  "dataset": "AI4Bharat IndicVoices",
+  "source": "https://huggingface.co/datasets/ai4bharat/IndicVoices",
+  "license": "CC BY 4.0",
+  "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+  "attribution": "AI4Bharat, IIT Madras. Javed et al., IndicVoices (2024).",
+  "modifications": "Each clip is a timestamped excerpt of an original recording. Non-speech tags and repeated whitespace were removed from the verbatim reference.",
+  "samples": [
+    {
+      "id": "hi",
+      "language": "Hindi",
+      "locale": "hi-IN",
+      "audio": "/voice/hi.wav",
+      "transcript": "मीडियम में सर आपको लगभग नियर अबाउट चालीस पचास हजार में ठीक ठाक में मिल जाएगा",
+      "durationSeconds": 3.536,
+      "sha256": "65c76243f94dfbd7c8fa6c8f920604a82f96ef53b8f2a5c48803bb1f0eb193b4",
+      "recording": "00290928-7790-4a7f-9d56-adeb3d7c3427_0",
+      "segment": 9,
+      "archive": "https://iv-release.objectstore.e2enetworks.net/dmu_release/v4_Hindi_train.tgz",
+      "startSeconds": 66.566,
+      "endSeconds": 70.102
+    },
+    {
+      "id": "te",
+      "language": "Telugu",
+      "locale": "te-IN",
+      "audio": "/voice/te.wav",
+      "transcript": "అయితే మనకు ప్రాసెస్ ఏముంటది అది డాక్యుమెంట్స్ ఏమేమి నీడ్ ఉంటాయి మనకు",
+      "durationSeconds": 4.96,
+      "sha256": "02a1d4e0993fac3b9d67bc6732f2a778f2a7e61d3bba63be8b964bf67389dd62",
+      "recording": "00740be7-2bd8-4039-a4f7-7269753c8ecd_0",
+      "segment": 14,
+      "archive": "https://iv-release.objectstore.e2enetworks.net/dmu_release/v4_Telugu_train.tgz",
+      "startSeconds": 110.94200000000001,
+      "endSeconds": 115.902
+    }
+  ]
+}

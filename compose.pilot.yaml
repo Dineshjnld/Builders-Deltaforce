@@ -1,0 +1,41 @@
+name: deltaforce-pilot
+services:
+  fieldos:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      DELTA_DEPLOYMENT: pilot
+      DELTA_HTTPS: '1'
+      STUDIO_BOOTSTRAP_FILE: /run/secrets/bootstrap
+      DB_PATH: /data/studio.sqlite
+      STUDIO_MODEL_URL: http://studio-model:8080
+    secrets: [bootstrap]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ports: ['127.0.0.1:8790:8787']
+    volumes: [pilot_data:/data]
+    networks: [model,frontend]
+    healthcheck:
+      test: ['CMD','node','-e',"fetch('http://127.0.0.1:8787/api/config').then(async r=>process.exit(r.ok && (await r.json()).demo===false?0:1))"]
+      interval: 10s
+      timeout: 4s
+      retries: 6
+  studio-model:
+    image: ${STUDIO_MODEL_IMAGE:?Provide the pinned llama.cpp image}
+    restart: unless-stopped
+    command: ['-m','/models/qwen.gguf','--host','0.0.0.0','--port','8080','-c','3072','-t','4','--alias','local']
+    volumes: ['./var/models/qwen.gguf:/models/qwen.gguf:ro']
+    networks: [model]
+networks:
+  model:
+    internal: true
+  frontend: {}
+volumes:
+  pilot_data: {}
+secrets:
+  bootstrap:
+    file: ${STUDIO_BOOTSTRAP_PATH:?Provide a private bootstrap JSON file}

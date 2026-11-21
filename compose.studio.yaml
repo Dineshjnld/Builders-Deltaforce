@@ -1,0 +1,36 @@
+services:
+  fieldos:
+    networks: [default, private-model]
+    environment:
+      STUDIO_MODEL_URL: http://studio-model:8080
+      SPEECH_URL: http://speech:8091
+  speech:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/speech.Dockerfile
+      additional_contexts:
+        wheels: ${SPEECH_WHEELS:-./services/speech}
+    networks: [private-model]
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - ./apps/android/app/src/main/assets/asr:/asr:ro
+      - ./var/models/indicconformer-hi:/hi:ro
+      - ./var/models/indicconformer-te:/te:ro
+    healthcheck:
+      test: ["CMD","python","-c","import urllib.request; urllib.request.urlopen('http://localhost:8091/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 8
+  studio-model:
+    image: ${STUDIO_MODEL_IMAGE:?Set a pinned llama.cpp server image}
+    restart: unless-stopped
+    volumes:
+      - ./var/models:/models:ro
+    command: ["-m","/models/qwen.gguf","--host","0.0.0.0","--port","8080","-c","3072","-t","4","--alias","local"]
+    networks: [private-model]
+networks:
+  private-model:
+    internal: true

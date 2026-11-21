@@ -1,0 +1,15 @@
+var/
+node_modules/
+.gradle/
+**/build/
+local.properties
+.env
+.env.*
+*.env
+.aws/
+*.pem
+*.p12
+*.jks
+*.sqlite*
+*.apk
+__pycache__/

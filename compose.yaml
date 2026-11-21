@@ -1,0 +1,15 @@
+services:
+  fieldos:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile
+    environment:
+      HOST: 0.0.0.0
+      DELTA_DEMO: '1'
+      DB_PATH: /data/fieldos.sqlite
+    ports:
+      - '127.0.0.1:8787:8787'
+    volumes:
+      - fieldos_data:/data
+volumes:
+  fieldos_data:

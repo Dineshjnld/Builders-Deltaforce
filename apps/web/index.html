@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#171a25"><title>Agent Studio · Command Centre</title><link rel="stylesheet" href="/centre.css"><script defer src="/centre.js"></script></head>
+<body>
+<header><div class="brand"><b aria-hidden="true">Δ</b><span>DELTAFORCE</span><i></i> Agent Studio</div><div class="account"><span id="identity"></span><button id="auth">Sign in</button></div></header>
+<div class="shell">
+<aside><div class="rail-title">Command centre</div><button class="new" id="new">＋ New network</button><h2>Network library</h2><nav id="library" aria-label="Saved networks"></nav><div class="rail-foot">Network definitions <code>.hocon</code></div></aside>
+<main><div class="heading"><div><div class="crumb" id="crumb">Workspace / Networks</div><h1 id="title">Network command centre</h1></div><span class="version" id="revision">New draft</span></div>
+<div class="work">
+<section class="chat pane"><div class="pane-head"><h2>Network designer</h2><span class="symbol">✧</span></div><div id="messages" class="messages" aria-live="polite"></div>
+<form id="compose"><label for="prompt">Design instructions</label><textarea id="prompt" maxlength="2000" required placeholder="Describe the goal, agent roles and how they should collaborate…"></textarea><button class="primary" id="generate">Generate network</button></form></section>
+<section class="canvas pane"><div class="pane-head tabs" role="group" aria-label="Network views"><button data-view="topology">Topology</button><button data-view="source">HOCON</button><button data-view="runs">Test runs</button></div>
+<div id="view"></div></section></div>
+<div id="status" role="status" aria-live="polite"></div></main></div>
+<dialog id="login"><form id="credentials"><h2>Workspace sign-in</h2><label>Email<input name="email" type="email" required></label><label>Password<input name="password" type="password" required></label><button class="primary">Sign in</button><button type="button" id="demo" hidden>Open local demo</button><button type="button" id="cancel">Cancel</button><span id="loginError" role="alert"></span></form></dialog>
+</body></html>
