@@ -2,6 +2,29 @@
 Public customer demo: https://32.189.49.149:8443/chat/telangana_public_services_cb6baa3c7d45
 Hosted operator Studio: https://32.189.49.149/multiAgentAccelerator?network=agent_network_designer (private operator credentials). The local operator journey below requires no account. Watch DEMO.mp4 and read SHORTLIST.pdf.
 
+## What to evaluate
+
+DeltaSAN turns an officer's service brief into a connected network of agents, then publishes that network as a resident-facing web app. Start with the Telangana income certificate journey for a reproducible local evaluation. Then change the brief to test a second use case.
+
+| Use case | Fresh input to try | Observable capability |
+|---|---|---|
+| Telangana revenue help desk | “Help residents find the official Telangana income certificate directory.” | Select the state service directory as an input. After publication a resident can ask where to apply and open the official source. |
+| Andhra Pradesh district hospital | “Show government use cases in Andhra Pradesh”, then “Help a district hospital guide patients to outpatient services.” | Ask which integrations are available. The builder retains the hospital goal and patient audience while answering the question. Appointment inventory requires an authorized hospital connector. |
+| Scholarship guidance | “Help Andhra Pradesh students find official scholarship guidance and refer exceptions to an officer.” | Inspect the assigned roles and tool bindings after confirming. Require review in Playground and approve a synthetic customer turn. |
+| Internal library desk | “Help library patrons understand circulation rules.” Choose “chat only” and supply synthetic rules. | Inspect the resulting graph for zero external tool bindings. Publish it and ask “Who are you?” to verify the customer-facing identity. |
+
+## Automated evaluator acceptance sequence
+
+1. Extract the ZIP into a writable folder. Run the two setup commands below from the folder containing this file. Leave the OpenAI key empty for the local evaluation. Allow outbound HTTPS for initial dependencies and model weights.
+2. Wait for the Studio list endpoint to return HTTP 200 **and** contain agent_network_designer. The customer metadata endpoint below must also return 200. Container startup can precede registry readiness.
+3. Run **python3 judge_smoke.py**. It supplies fresh input using the local APIs. Success prints **PASS: fresh graph, publication, review, official source and persistent answer** followed by the new customer URL. Keep that URL for the browser checks. Each successful run creates a separate synthetic deployment.
+4. Open Studio, Playground and the newly published customer URL using the journeys below. Verify that a greeting leaves the builder waiting for a goal, confirmation produces a saved graph, and a pending customer turn waits for an operator decision. Reload the customer tab in the same browser profile to verify persistence.
+5. For a keyless voice check, run the following command from the archive root. Expect JSON with a nonempty transcript and language **te**. Then use Start voice in the browser to test the microphone interactively.
+
+       curl -fsS -H "x-deltasan-voice: 1" -H "Content-Type: audio/wav" --data-binary @apps/web/voice/te.wav "http://127.0.0.1:45220/api/voice/transcribe?lang=auto"
+
+6. Run the twelve regression tests below. If a step fails, record the failing URL, status and service logs. For build or registration failures inspect **runtime**, **model** and **inference**; for publication or saved history inspect **publisher** and **customers**; for local audio inspect **speech**. Use docker compose -f compose.judge.yaml logs --tail 100 SERVICE, replacing SERVICE with the relevant name. Preserve the volume when retrying a persistence check.
+
 ## Start from this directory
 Use a clean Linux x86-64 machine with Docker Engine, Compose v2, Python 3.10+ and outbound HTTPS to PyPI, npm, Docker/GHCR and Hugging Face. Allocate approximately 8 CPU cores, 16 GB RAM and 30 GB free space for the first build. Windows with Docker Desktop in Linux-container mode can run the same commands; use py in place of python3. The containers install Python 3.13, Neuro SAN Studio 0.4.5, Neuro SAN 0.7.27, NSFlow 0.7.5, Node 26.12.1 and Yarn 4.12.0. SQLite is embedded. Keep the extracted directory writable.
 
