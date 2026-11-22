@@ -845,7 +845,7 @@ export const MultiAgentAccelerator: FC<MultiAgentAcceleratorProps> = ({
     useEffect(() => {
         // Don't show the tour modal if any of these are true
         if (
-            haveShownTourModal ||
+            haveShownTourModal || isNetworkDesignerMode ||
             tourStatus === TourPromptState.Taken ||
             tourStatus === TourPromptState.DontShowAgain ||
             tourRequested
@@ -861,7 +861,7 @@ export const MultiAgentAccelerator: FC<MultiAgentAcceleratorProps> = ({
         return () => {
             clearTimeout(timer)
         }
-    }, [haveShownTourModal, tourRequested, tourStatus])
+    }, [haveShownTourModal, isNetworkDesignerMode, tourRequested, tourStatus])
 
     useEffect(() => {
         if (!tourRequested) return

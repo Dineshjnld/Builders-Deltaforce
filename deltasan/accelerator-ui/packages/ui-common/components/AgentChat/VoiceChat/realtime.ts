@@ -15,6 +15,8 @@ export async function startRealtime(access:RealtimeAccess, signal:AbortSignal, c
     const channel = peer.createDataChannel("oai-events")
     let mic: MediaStream | undefined
     let generation = 0
+    let audioPlaying = false
+    let pendingSpeech: (()=>void) | undefined
     let chain = Promise.resolve()
     const seen = new Set<string>()
     const close = () => {
@@ -32,8 +34,14 @@ export async function startRealtime(access:RealtimeAccess, signal:AbortSignal, c
         if (signal.aborted) return
         const event = JSON.parse(ev.data)
         if(event.type==="error"){callbacks.status("Voice connection reported an error. End the session to reconnect.");return}
-        if(event.type==="input_audio_buffer.speech_started"){generation++;callbacks.status("Hearing you…");return}
-        if(event.type==="output_audio_buffer.stopped"){callbacks.status("Listening · live voice");return}
+        if(event.type==="input_audio_buffer.speech_started"){generation++;pendingSpeech=undefined;callbacks.status("Hearing you…");return}
+        if(event.type==="output_audio_buffer.stopped" || event.type==="output_audio_buffer.cleared"){
+            audioPlaying=false
+            const next=pendingSpeech
+            pendingSpeech=undefined
+            if(next)next();else callbacks.status("Listening · live voice")
+            return
+        }
         if(event.type!=="conversation.item.input_audio_transcription.completed" || seen.has(event.item_id))return
         seen.add(event.item_id)
         const text = String(event.transcript || "").trim()
@@ -45,12 +53,22 @@ export async function startRealtime(access:RealtimeAccess, signal:AbortSignal, c
             if(signal.aborted)return
             callbacks.status("Waiting for the network…")
             const lang = /[\u0c00-\u0c7f]/.test(text)?"Telugu":/[\u0900-\u097f]/.test(text)?"Hindi":"the speaker’s language"
-            const answer = await callbacks.send(text,lang)
+            const speak=(instruction:string)=>{
+                if(signal.aborted||generation!==turn||channel.readyState!=="open")return
+                audioPlaying=true
+                channel.send(JSON.stringify({type:"response.create",response:{output_modalities:["audio"],input:[],instructions:instruction}}))
+            }
+            const acknowledgement=setTimeout(()=>{
+                if(!audioPlaying)speak("Say just one brief acknowledgement in "+lang+
+                    " that the network is checking the request. Do not answer the request or claim it is complete.")
+            },1800)
+            let answer:string
+            try{answer=await callbacks.send(text,lang)}finally{clearTimeout(acknowledgement)}
             if(signal.aborted || generation!==turn)return
             callbacks.reply(answer)
             if(!answer){callbacks.status("Listening · live voice");return}
-            channel.send(JSON.stringify({type:"response.create",response:{output_modalities:["audio"],input:[],instructions:
-                "Read the following agent answer aloud in the speaker's language; use "+lang+". Omit markdown and URLs. Do not add new information. Answer: "+answer.slice(0,10000)}}))
+            const deliver=()=>speak("Read the following agent answer aloud in the speaker's language; use "+lang+". Omit markdown and URLs. Do not add new information. Answer: "+answer.slice(0,10000))
+            if(audioPlaying)pendingSpeech=deliver;else deliver()
             callbacks.status("Speaking · interrupt with your voice")
         }).catch(()=>{if(!signal.aborted)callbacks.status("The network could not complete this turn.")})
     }

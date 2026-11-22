@@ -113,7 +113,5 @@ body {
         display: flex;
         flex: 0 1 auto;
     }
-    #nav-bar-links li:not(:has(#nav-link-deployments)) {
-        display: none;
-    }
+    #nav-bar-links { overflow-x: auto; justify-content: flex-start; }
 }

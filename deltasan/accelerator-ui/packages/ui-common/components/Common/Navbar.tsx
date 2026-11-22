@@ -460,7 +460,7 @@ export const Navbar = ({
                         [EXTRA_WIDE]: {display: "block"},
                     }}
                 >
-                    Build: <strong id="build-strong">{NEURO_SAN_UI_VERSION}</strong>
+                    {NEURO_SAN_UI_VERSION !== "Unknown Version" && <>Build <strong id="build-strong">{NEURO_SAN_UI_VERSION}</strong></>}
                 </Typography>
             </Grid>
 

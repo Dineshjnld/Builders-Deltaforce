@@ -251,7 +251,7 @@ async def run_turn(key, turn_id):
             # A directory lookup is complete once the requested official link has been found.
             # Other tasks still go to the published network with the retrieved source.
             if re.search(r"\b(where|link|website|portal|directory|url)\b",row["message"],re.I) and not re.search(r"\b(compare|draft|analyse|analyze|summarize|and explain)\b",row["message"],re.I) and row["language"] not in ("Telugu","Hindi"):
-                answer = f"{source['title']} is listed by {source['department']} in {source['state']}. Open the official service page for the current instructions.\n\n{source['url']}"
+                answer = f"{source['title']} is listed by {source['department']} in {source['state']}. Open the official service page for the current instructions.\n\n[{source['department']} service directory]({source['url']})"
                 with database() as db:
                     db.execute("UPDATE turns SET state='answered',answer=? WHERE id=?",(answer,turn_id))
                 return
