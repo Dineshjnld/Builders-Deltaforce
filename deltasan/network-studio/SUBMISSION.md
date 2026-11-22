@@ -2,6 +2,8 @@
 
 **Track:** Build Ambitious, Problem Statement 3. **Reference products:** [Neuro SAN Studio](https://github.com/cognizant-ai-lab/neuro-san-studio), [Multi-Agent Accelerator](https://neuro-san.evolution.ml/multiAgentAccelerator) and [Agentic City](https://agentic-city.decisionai.ml/app/#deploy).
 
+An officer describes a service problem by text or voice. DeltaSAN collects a brief, builds a network after confirmation, and publishes a customer app. A resident can then ask that network a question, get an official source, and return to the conversation. The public demo follows a Telangana resident looking for income certificate guidance.
+
 ## Try the working product
 
 - [Public Telangana service desk](https://32.189.49.149:8443/chat/telangana_public_services_cb6baa3c7d45). Ask “Where do I find the official Telangana income certificate service?” A successful directory lookup includes the department and its official source. Refresh the same tab to recover the conversation.
@@ -15,13 +17,16 @@
 | Check | Result |
 |---|---|
 | Fresh EC2 build | A previously unseen brief for Telangana income certificate guidance produced two connected agents. The trained tool selector assigned the state directory to one agent. No registry entry appeared before confirmation. |
+| Fresh browser build | In a new Chrome session on the public Studio, an Andhra Pradesh scholarship brief produced three roles after confirmation. The selector assigned `gov_services` to `ScholarshipInquiryRouter`, and the validator saved the graph. [Build activity screenshot](../screenshots/submission-build-activity.png) |
 | Real build activity | Four events reported the actual transfer of the brief, the generated roles, the selected binding, and successful graph validation and storage. They describe components doing work. Agent-to-agent call paths during execution come from Neuro SAN's runtime. |
 | Publishing and review | The generated network was registered, published and given its own civic-themed web app. An approved customer message returned the official Telangana service directory link. Reading the same session again returned the saved answer. |
 | Tool selection | On 36 held-out, author-written examples balanced across three classes, the trained router got 33 correct (91.7%). A constant “no connector” baseline gets 12/36 (33.3%). The three errors were abstentions. All 12 no-tool cases were correct. [Data and results](decision_model/evaluation.json) |
 | Live public sources | The MCP tools returned a Telangana Revenue service entry and current station readings from IMD Amaravati. MoSPI’s keyless MCP returned a live dataset list. The [catalog](government_sources.json) covers 13 Andhra Pradesh and 13 Telangana scenarios. The [government sources](https://www.telangana.gov.in/services/state-services/) remain authoritative for current procedures. |
 | Model failover | A test against the EC2 gateway returned `local-qwen` from the healthy primary. A separate isolated test pointed its primary to an unavailable loopback address, and the same question returned a live GPT-4.1 mini response. |
-| Speech | Chrome negotiated a real OpenAI audio session and received Hindi and Telugu transcriptions and audio responses. The test injected recordings into a browser microphone track. Speech and model inference were live. Network execution time varies by graph. |
+| Speech | Chrome negotiated a real OpenAI audio session and received Hindi and Telugu transcriptions and audio responses. The test injected recordings into a browser microphone track. Speech and model inference were live. On a fresh Studio voice session, the 3.54-second Hindi recording reached spoken playback at 7.04 seconds from input start and the 4.96-second Telugu recording at 7.30 seconds. That is approximately 3.50 and 2.34 seconds after the recordings ended. These are two observations, not a general latency benchmark. In a six-agent customer network, one Hindi turn took 93.45 seconds from input start to substantive playback. The UI streams activity and can acknowledge a long turn while the network works. [Recording attribution](../../apps/web/voice/samples.json) |
 | Customer UI | Desktop and mobile browser tests covered typed submission, editable dictation, approval state, and streaming completion. The client resumes from authenticated history when an event stream drops. |
+
+[Live customer desk screenshots, desktop](../screenshots/submission-public-civic.png) and [mobile](../screenshots/submission-public-mobile.png).
 
 ## Original work, reuse and limits
 
