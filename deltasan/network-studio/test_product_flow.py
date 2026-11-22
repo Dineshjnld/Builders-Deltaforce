@@ -14,6 +14,34 @@ with patch.dict(os.environ, DELTA_CITY_TOKEN="test-only"):
 
 
 class BuilderTests(unittest.TestCase):
+    def test_hospital_discovery_and_connector_questions_survive_replay(self):
+        goal = "Help a district hospital guide patients to outpatient services"
+        turns = ["Show government use cases in Andhra Pradesh", goal,
+                 "what are all the integrattions available?", "whar are all the integrations avbailable?",
+                 "what is the inetgrations cheppu"]
+        catalog = {"gov_services":{"label":"State service directory","description":"Official public sources."},
+                   "custom":{"label":"Office hours","description":"Department schedule."}}
+        for end in range(1, len(turns) + 1):
+            state = {}
+            for previous in turns[:end-1]:
+                collect(state, previous)
+            reply, design = collect(state, turns[end-1], catalog)
+            self.assertIsNone(design)
+            if end == 1:
+                self.assertNotIn("design_brief", state)
+                self.assertIn("JnanaBhumi", reply)
+            else:
+                self.assertEqual(state["design_brief"], {"goal":goal,"audience":"Patients","region":"Andhra Pradesh"})
+                if end > 2:
+                    self.assertIn("Office hours",reply)
+                    self.assertIn("hospital",reply)
+        collect(state,"Use the public services directory")
+        collect(state,"List outpatient departments and route exceptions to an officer")
+        brief = state["design_brief"].copy()
+        self.assertIn("encryption", collect(state,"how do encryption and guardrails work?")[0].lower())
+        self.assertEqual(state["design_brief"],brief)
+        self.assertIn(goal,collect(state,"build it")[1])
+
     def test_greeting_and_incomplete_confirmation_cannot_build(self):
         data = {}
         for text in ("hi", "build it", "hello"):
@@ -32,6 +60,37 @@ class BuilderTests(unittest.TestCase):
 
 
 class CustomerTests(unittest.TestCase):
+    def test_masking_precedes_review_and_local_speech_is_enforced(self):
+        from privacy import mask_identifiers
+        message = "Sample: test@example.org, 98765 43210, 2345 6789 0123, ABCDE1234F, UHID: TEST-123."
+        clean = mask_identifiers(message)
+        for identifier in ("test@example.org","98765","2345","ABCDE1234F","TEST-123"):
+            self.assertNotIn(identifier,clean)
+        rules = Path(__file__).with_name("privacy_rules.json")
+        browser = rules.parent.parent / "accelerator-ui/packages/ui-common/components/AgentChat/privacy_rules.json"
+        if browser.exists():
+            self.assertEqual(json.loads(rules.read_text()),json.loads(browser.read_text()))
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            registry=root/"index.json"
+            registry.write_text('{"desk":{"enabled":true,"org_name":"Test","name":"Desk","agents":["Desk"]}}')
+            with patch.multiple(customer, REGISTRY=registry, DB=root/"test.db", ADMIN="reviewer"), TestClient(customer.app) as c:
+                api="/api/customer/desk"
+                auth={"Authorization":"Bearer "+c.post(api+"/sessions").json()["token"]}
+                admin={"Authorization":"Bearer reviewer"}
+                with patch.object(customer,"run_turn",new_callable=AsyncMock) as execute:
+                    c.post(api+"/turns",headers=auth,json={"message":message,"id":str(uuid4()),"review":True}).raise_for_status()
+                    self.assertEqual(c.get(api+"/turns",headers=auth).json()[0]["message"],clean)
+                    self.assertEqual(c.get("/operator/reviews",headers=admin).json()["pending"][0]["message"],clean)
+                    execute.assert_not_awaited()
+                update={"id":"desk","action":"local_speech"}
+                self.assertEqual(c.post("/operator/reviews",headers=auth,json=update).status_code,403)
+                c.post("/operator/reviews",headers=admin,json=update).raise_for_status()
+                self.assertEqual(c.get("/operator/reviews",headers=admin).json()["localSpeech"],["desk"])
+                self.assertFalse(c.get(api).json()["realtime"])
+                self.assertEqual(c.post(api+"/voice",headers=auth,content="v=0").status_code,403)
+                c.post("/operator/reviews",headers=admin,json={"id":"desk","action":"allow_cloud_speech"}).raise_for_status()
+                self.assertFalse(c.get("/operator/reviews",headers=admin).json()["localSpeech"])
     def test_customer_greeting_and_identity_match_each_deployment(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

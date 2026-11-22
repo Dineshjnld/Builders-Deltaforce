@@ -17,6 +17,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from ai_settings import domain_theme, setting
 from civic_context import official_service
+from privacy import mask_context, mask_identifiers
 from pyhocon import ConfigFactory
 from pydantic import BaseModel, Field
 
@@ -50,6 +51,7 @@ def setup():
         db.execute("UPDATE turns SET state='failed',answer='This turn timed out. Please try again.' WHERE state='running' AND created<?", (time.time()-300,))
         db.execute("CREATE TABLE IF NOT EXISTS turn_activity (id TEXT PRIMARY KEY, activity TEXT)")
         db.execute("CREATE TABLE IF NOT EXISTS voice_usage (day TEXT PRIMARY KEY, sessions INTEGER NOT NULL)")
+        db.execute("CREATE TABLE IF NOT EXISTS local_speech (network TEXT PRIMARY KEY)")
 
 
 def deployment(key):
@@ -80,9 +82,10 @@ def info(key: str):
     row = deployment(key)
     with database() as db:
         policy = db.execute("SELECT review FROM policy WHERE network=?", (key,)).fetchone()
+        local_audio = db.execute("SELECT 1 FROM local_speech WHERE network=?", (key,)).fetchone() is not None
     return {"name": row.get("display_name") or row["name"], "organization": row["org_name"],
             "agents": row["agents"], "description":row.get("description",""), "review": bool(policy and policy[0]),
-            "theme":row.get("theme") or domain_theme(row), "realtime":bool(setting("OPENAI_API_KEY"))}
+            "theme":row.get("theme") or domain_theme(row), "realtime":not local_audio and bool(setting("OPENAI_API_KEY"))}
 
 
 @app.post("/api/customer/{key}/sessions")
@@ -138,6 +141,9 @@ async def operator_voice(req: Request):
 async def customer_voice(key: str, req: Request):
     deployment(key)
     identity(req,key)
+    with database() as db:
+        if db.execute("SELECT 1 FROM local_speech WHERE network=?", (key,)).fetchone():
+            raise HTTPException(403, "This network uses local speech processing.")
     return await negotiate(req)
 
 
@@ -256,10 +262,10 @@ async def run_turn(key, turn_id):
                     db.execute("UPDATE turns SET state='answered',answer=? WHERE id=?",(answer,turn_id))
                 return
         if recent:
-            prompt += "\nRecent completed exchanges for continuity: "+json.dumps([{"customer":x["message"][:400],"assistant":x["answer"][:1000]} for x in reversed(recent)],ensure_ascii=False)
+            prompt += "\nRecent completed exchanges for continuity: "+json.dumps([{"customer":mask_identifiers(x["message"])[:400],"assistant":mask_identifiers(x["answer"])[:1000]} for x in reversed(recent)],ensure_ascii=False)
         payload = {"user_message":{"type":"HUMAN","text":prompt}, "chat_filter":{"chat_filter_type":"MAXIMAL"}}
         if row["context"]:
-            payload["chat_context"] = json.loads(row["context"])
+            payload["chat_context"] = mask_context(json.loads(row["context"]))
         answer, context, last_activity = "", None, None
         async with httpx.AsyncClient(timeout=145) as client:
             async with client.stream("POST", f"{RUNTIME}/api/v1/city/{key}/streaming_chat", json=payload) as stream:
@@ -282,8 +288,8 @@ async def run_turn(key, turn_id):
             answer += "\n\n"+source["title"]+" · "+source["url"]
         with database() as db:
             if context:
-                db.execute("UPDATE sessions SET context=? WHERE id=?", (json.dumps(context), row["session"]))
-            db.execute("UPDATE turns SET state='answered',answer=? WHERE id=?", (answer, turn_id))
+                db.execute("UPDATE sessions SET context=? WHERE id=?", (json.dumps(mask_context(context)), row["session"]))
+            db.execute("UPDATE turns SET state='answered',answer=? WHERE id=?", (mask_identifiers(answer), turn_id))
     except (httpx.HTTPError, ValueError, HTTPException):
         with database() as db:
             db.execute("UPDATE turns SET state='failed',answer=? WHERE id=?", ("The network could not finish this turn. Please try again.", turn_id))
@@ -302,7 +308,7 @@ async def send(key: str, body: Turn, req: Request, background: BackgroundTasks):
         policy = db.execute("SELECT review FROM policy WHERE network=?", (key,)).fetchone()
         pending = body.review or bool(policy and policy[0])
         try:
-            db.execute("INSERT INTO turns(id,session,message,language,state,created) VALUES(?,?,?,?,?,?)", (turn_id,session["id"],body.message,body.language,"pending" if pending else "running",time.time()))
+            db.execute("INSERT INTO turns(id,session,message,language,state,created) VALUES(?,?,?,?,?,?)", (turn_id,session["id"],mask_identifiers(body.message),body.language,"pending" if pending else "running",time.time()))
         except sqlite3.IntegrityError:
             raise HTTPException(409, "Finish the current turn first.")
     if not pending:
@@ -318,7 +324,8 @@ def queue(req: Request):
     operator(req)
     with database() as db:
         rows = db.execute("SELECT t.id,t.message,s.network FROM turns t JOIN sessions s ON t.session=s.id WHERE state='pending' ORDER BY created")
-        return {"pending":[dict(r) for r in rows],"required":[r[0] for r in db.execute("SELECT network FROM policy WHERE review=1")]}
+        return {"pending":[dict(r) for r in rows],"required":[r[0] for r in db.execute("SELECT network FROM policy WHERE review=1")],
+                "localSpeech":[r[0] for r in db.execute("SELECT network FROM local_speech")]}
 
 
 class Decision(BaseModel):
@@ -329,6 +336,14 @@ class Decision(BaseModel):
 @app.post("/operator/reviews")
 async def decide(body: Decision, req: Request):
     operator(req)
+    if body.action in ("local_speech", "allow_cloud_speech"):
+        deployment(body.id)
+        with database() as db:
+            if body.action == "local_speech":
+                db.execute("INSERT OR IGNORE INTO local_speech VALUES(?)", (body.id,))
+            else:
+                db.execute("DELETE FROM local_speech WHERE network=?", (body.id,))
+        return {"ok":True}
     if body.action in ("require","optional"):
         deployment(body.id)
         with database() as db:

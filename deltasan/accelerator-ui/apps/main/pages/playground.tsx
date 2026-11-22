@@ -8,10 +8,11 @@ export default function Playground() {
     const router=useRouter()
     const [networks,setNetworks]=useState<string[]>([]),[pending,setPending]=useState<Review[]>([])
     const [required,setRequired]=useState<string[]>([]),[error,setError]=useState(""),[busy,setBusy]=useState(false)
+    const [localSpeech,setLocalSpeech]=useState<string[]>([])
     async function refresh(){
         const r=await fetch("/api/reviews")
         if(!r.ok)throw Error("The review queue is unavailable.")
-        const data=await r.json();setPending(data.pending);setRequired(data.required)
+        const data=await r.json();setPending(data.pending);setRequired(data.required);setLocalSpeech(data.localSpeech || [])
     }
     useEffect(()=>{
         let live=true
@@ -43,6 +44,8 @@ export default function Playground() {
             return <div key={n} style={{display:"flex",gap:16,alignItems:"center",justifyContent:"space-between",padding:"12px 0",borderBottom:"1px solid #425064",flexWrap:"wrap"}}>
                 <a href={"/playground?network="+encodeURIComponent(n)}>{n.replace(/_[a-f0-9]{12}(?=_|$)/g,"").replaceAll("_"," ")}</a>
                 {deployed&&<label><input type="checkbox" checked={required.includes(key)} disabled={busy}
-                    onChange={e=>act(key,e.target.checked?"require":"optional")}/> Require approval before every customer turn</label>}</div>
+                    onChange={e=>act(key,e.target.checked?"require":"optional")}/> Require approval before every customer turn</label>}
+                {deployed&&<label><input type="checkbox" checked={localSpeech.includes(key)} disabled={busy}
+                    onChange={e=>act(key,e.target.checked?"local_speech":"allow_cloud_speech")}/> Use local speech for new customer sessions</label>}</div>
         })}</section></main>
 }

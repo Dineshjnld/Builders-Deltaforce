@@ -4,7 +4,7 @@ from decision_model import predict
 
 INTENT = {
     "gov_weather":r"weather|rainfall|monsoon|forecast|meteorolog|imd\b|వాతావరణ|बारिश",
-    "gov_services":r"meeseva|mee seva|government service|certificate|state service|public service|revenue officer|municipal|scholarship",
+    "gov_services":r"meeseva|mee seva|government service|certificate|state (?:service|directory)|public service|revenue officer|municipal|scholarship",
     "mospi":r"\bmospi\b|esankhyiki|inflation|consumer price index|labour force|official statistics|statistical dataset",
     "clock":r"\bclock\b|time ?zone|current (?:time|date)",
     "fetch":r"web ?fetch|supplied (?:web ?page|url)|read (?:a |the |given )?url",

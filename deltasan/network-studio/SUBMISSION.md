@@ -40,6 +40,14 @@ The customer app chooses among six implemented visual themes. On publication, th
 
 ## Configuration and checks
 
+### Conversation and privacy controls
+
+In the builder, try “Show government use cases in Andhra Pradesh”, then “Help a district hospital guide patients to outpatient services”, followed by “what are all the integrattions available?” or “what is the inetgrations cheppu”. Studio reads the configured integration catalog and resumes the pending question. A discovery or privacy question never supplies a required field. For this example, the confirmed brief identifies the patients, outpatient goal and region. Only confirmation starts graph generation.
+
+New Studio UI queries and new published chat inputs mask common email addresses, Indian mobile numbers, PANs, 12-digit ID formats and labelled patient IDs. The customer server applies the mask before persistence, review and execution. Pattern matching can miss names, clinical details and unusual spellings. Use synthetic records. Existing history is retained. Customer requests use HTTPS on EC2. Stored messages and context live in SQLite on an encrypted EBS volume. The application can read authorized history and review requests. This setup provides transport and volume encryption; it does not provide end-to-end encryption between human participants.
+
+In Playground, operators can require human review before every customer turn and restrict new speech connections to local processing per deployment. Review and speech policies persist. Local speech uses DeltaSAN's server for audio. The text inference gateway can still use its configured cloud fallback. The live voice panel offers microphone mute, interruption, captions, local speech, and a sound-reactive indicator with reduced-motion support. Raw audio reaches the selected speech processor before transcript masking.
+
 The Windows checkout reads `%LOCALAPPDATA%/DeltaSAN/config/.env`. On EC2 the AI-enabled services read a private read-only mount selected by `DELTA_AI_ENV`. Use `OPENAI_API_KEY`, `OPENAI_REALTIME_MODEL`, `OPENAI_THEME_MODEL`, `OPENAI_FALLBACK_MODEL` and `DELTA_VOICE_SESSIONS_PER_DAY`. The standard provider key stays server-side. The deployment defaults to 24 new cloud voice sessions per UTC day across the installation. The local IndicConformer / Whisper worker provides the alternative speech path.
 
 The local runtime modules are `customer:app`, `city_server:app`, `inference_gateway:app`, and two read-only MCP processes (`python government_mcp.py` and `python government_mcp.py weather`). The EC2 primary listens on loopback port 45185 and the inference gateway on 45212. Point both Studio's `DELTA_QWEN_URL` and the runtime’s OpenAI-compatible base URL at the gateway's `/v1` endpoint for failover. The government MCP services listen on 45210 and 45211. Only the TLS Studio and customer gateways are public.

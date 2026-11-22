@@ -510,6 +510,7 @@
     cursor: default;
 }
 .chatFooter {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -533,6 +534,8 @@
 .team {
     position: relative;
 }
+.chatFooter > details:first-of-type {position:static}
+.chatFooter > details:first-of-type > div {left:50%;right:auto;bottom:100%;transform:translateX(-50%);font-size:13px}
 .team summary {
     cursor: pointer;
     list-style: none;

@@ -86,6 +86,7 @@ import {AGENT_NETWORK_DESIGNER_ID} from "../../MultiAgentAccelerator/const"
 import {CombinedAgentType, givesFinalAnswer, isLegacyAgentType} from "../Common/Types"
 import {chatMessageFromChunk, checkError} from "../Common/Utils"
 import {LiveVoice} from "../VoiceChat/LiveVoice"
+import {maskIdentifiers} from "../maskIdentifiers"
 
 //#region Types and Interfaces
 export interface ChatCommonProps {
@@ -737,7 +738,15 @@ export const ChatCommon = ({ref, ...props}: ChatCommonProps & {ref?: Ref<ChatCom
         // Extract final answer from that turn
         const finalAnswerTurn = currentTurns[idx]
         // Update relevant turn to be the final answer
-        setTurns((prev) => prev.map((turn, i) => (i === idx ? {...turn, role: MessageRole.FinalAnswer} : turn)))
+        setTurns((prev) => {
+            const lastUser = prev.reduce((last, turn, i) => turn.role === MessageRole.User ? i : last, -1)
+            return prev.flatMap((turn, i) => {
+                if (i === idx) return [{...turn, role: MessageRole.FinalAnswer}]
+                if (selectedNetwork === AGENT_NETWORK_DESIGNER_ID && i > lastUser && i < idx &&
+                    turn.role === MessageRole.Agent && turn.text && turn.text.trim() === finalAnswerTurn.text?.trim()) return []
+                return [turn]
+            })
+        })
 
         // Save final answer to chat history
         const finalAnswerContent = finalAnswerTurn.text || JSON.stringify(finalAnswerTurn.structure, null, 2)
@@ -745,14 +754,15 @@ export const ChatCommon = ({ref, ...props}: ChatCommonProps & {ref?: Ref<ChatCom
     }, [selectedNetwork, updateChatHistory])
 
     const handleSend = useCallback(
-        async (query: string, spokenLanguage?: string) => {
+        async (input: string, spokenLanguage?: string) => {
+            const query = maskIdentifiers(input)
             // Record user query in chat history. Discard anything beyond MAX_CHAT_HISTORY_ITEMS
             if (!query.trim() || sending.current) return
             sending.current = true
             spokenAnswer.current = ""
             setHandoff("")
             setActivity([])
-            setChatInput(previous => previous === query ? "" : previous)
+            setChatInput(previous => previous === input ? "" : previous)
             const userQueryMessage = new HumanMessage({content: query, id: uuid()})
             updateChatHistory(selectedNetwork, [userQueryMessage])
 

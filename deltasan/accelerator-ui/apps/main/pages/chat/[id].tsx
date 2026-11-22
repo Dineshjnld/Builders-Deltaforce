@@ -4,6 +4,7 @@ import {useRouter} from "next/router"
 import {FormEvent, useCallback, useEffect, useRef, useState} from "react"
 import ReactMarkdown from "react-markdown"
 import {LiveVoice} from "../../../../packages/ui-common/components/AgentChat/VoiceChat/LiveVoice"
+import {maskIdentifiers} from "../../../../packages/ui-common/components/AgentChat/maskIdentifiers"
 import {activeTurn, type CustomerTurn, followTurn} from "../../components/customerConversation"
 import styles from "../../components/CustomerChat.module.css"
 
@@ -114,6 +115,7 @@ function Chat({id}: {id: string}) {
         if (stickToEnd.current && history.current) history.current.scrollTop = history.current.scrollHeight
     }, [turns])
     async function send(message: string, language = "") {
+        message = maskIdentifiers(message)
         const signal = session.current?.signal
         if (!signal || lock.current || waiting || !ready || !message.trim()) return ""
         const turnId = crypto.randomUUID()
@@ -360,6 +362,13 @@ function Chat({id}: {id: string}) {
                             />{" "}
                             Human approval
                         </label>
+                        <details className={styles["team"]}>
+                            <summary>Privacy</summary>
+                            <div><strong>Before you share</strong>
+                                <p>Chat masks common Indian mobile, PAN, 12-digit ID, email and labelled patient ID formats. Names and free-text medical details can still pass through.</p>
+                                <p>Use human approval to pause a message before the agents run. Cloud voice sends audio to OpenAI. You can choose local speech before opening the microphone.</p>
+                            </div>
+                        </details>
                         {!!info?.agents.length && (
                             <details className={styles["team"]}>
                                 <summary>

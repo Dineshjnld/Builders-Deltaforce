@@ -12,6 +12,7 @@ from langchain.agents.middleware.types import hook_config
 from langchain_core.messages import AIMessage, HumanMessage
 from pyhocon import ConfigFactory
 from middleware.design_brief import collect, GREETING, BUILD, localize
+from middleware.builder_help import help_topic
 from middleware.connectors import select_tools
 from neuro_san_studio.agent_network_designer.middleware.agent_network_definition_middleware import (
     AgentNetworkDefinitionMiddleware,
@@ -38,6 +39,11 @@ class LocalNetworkDesigner(AgentNetworkDefinitionMiddleware):
             return self.finish("What problem should the agent network solve?")
         # Neuro SAN sends chat_context back to the browser, but can omit mutated sly_data.
         # Rebuild the brief from this conversation's own transcript when the next request arrives.
+        existing_brief = data.get("design_brief") or {}
+        polluted = any(help_topic(str(value)) in {"scenarios", "tools", "controls"} for value in existing_brief.values())
+        if polluted:
+            for key in ("design_brief", "brief_confirmable", "brief_dirty", "revision"):
+                data.pop(key, None)
         if not data.get("design_brief"):
             for old in messages[:last_user]:
                 if isinstance(old, HumanMessage):
@@ -54,19 +60,23 @@ class LocalNetworkDesigner(AgentNetworkDefinitionMiddleware):
         graph = data.get("studio_graph")
         network = data.get("studio_network")
         intent = message.split("\n\nRespond concisely in ", 1)[0].strip()
-        if re.search(r"(use cases?|scenarios?|service ideas)",intent,re.I) and re.search(r"(suggest|examples?|list|show|what)",intent,re.I):
-            rows = json.loads(Path("government_sources.json").read_text(encoding="utf-8"))
-            state = next((s for s in ("Andhra Pradesh","Telangana") if s.lower() in intent.lower()), None)
-            return self.finish("\n".join(["Here are public-service networks you can build:", *[
-                f"- {r['state']} · [{r['title']}]({r['url']})" for r in rows if not state or r["state"]==state
-            ], "Which problem would you like your network to solve?"]))
+        studio_url = os.environ.get("DELTA_STUDIO_URL", "http://127.0.0.1:45174")
+        catalog = None
+        if help_topic(intent) == "tools":
+            try:
+                async with httpx.AsyncClient(base_url=studio_url, timeout=4) as studio:
+                    result = await studio.get("/api/studio?catalog=1")
+                    result.raise_for_status()
+                    catalog = result.json()
+            except (httpx.HTTPError, ValueError):
+                pass
         confirmation = re.fullmatch(
             r"(?:(create|run|open|save|deploy)( it| the network)?|इसे खोलो|इसे खोलें|खोलें|"
             r"సేవ్ చేయండి|తెరవండి|దీన్ని తెరవండి)[.!।]?", intent, re.I
         )
         if network and not data.get("brief_dirty") and (confirmation or BUILD.fullmatch(intent) or GREETING.fullmatch(intent)):
             return self.finish(f"Your network is ready. [Open Playground](/playground?network={quote(network, safe='')}) · [Deploy](/deploy?network={quote(network, safe='')})")
-        reply, design_input = collect(data, intent)
+        reply, design_input = collect(data, intent, catalog)
         if reply:
             return self.finish(localize(reply,message))
         if config.get("llm_config.model_name", "") != "local-qwen" or data.get("llm_config"):
@@ -78,7 +88,7 @@ class LocalNetworkDesigner(AgentNetworkDefinitionMiddleware):
             state["messages"] = messages
             return await super().abefore_model(state, runtime)
         try:
-            async with httpx.AsyncClient(base_url=os.environ.get("DELTA_STUDIO_URL", "http://127.0.0.1:45174"), timeout=130) as studio:
+            async with httpx.AsyncClient(base_url=studio_url, timeout=130) as studio:
                 if data.get("brief_dirty") or not (confirmation and graph and network):
                     await self.activity("Brief coordinator","Network architect","Sending the confirmed goal, audience, inputs and outcome for graph design.")
                     design = await studio.post("/api/studio?action=chat", json={"message": design_input, "current": graph})

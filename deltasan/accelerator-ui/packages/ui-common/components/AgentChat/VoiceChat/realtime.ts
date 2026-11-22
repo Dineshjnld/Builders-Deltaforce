@@ -4,6 +4,8 @@ type Callbacks = {
     status:(text:string)=>void
     heard:(text:string)=>void
     reply:(text:string)=>void
+    inputStream:(stream:MediaStream)=>void
+    outputStream:(stream:MediaStream)=>void
     dictate?:(text:string)=>void
     send:(text:string, language:string)=>Promise<string>
 }
@@ -28,13 +30,23 @@ export async function startRealtime(access:RealtimeAccess, signal:AbortSignal, c
         audio.srcObject = null
     }
     signal.addEventListener("abort",close,{once:true})
-    peer.ontrack = ev => {audio.srcObject = ev.streams[0]; void audio.play().catch(()=>callbacks.status("Allow playback to hear the response."))}
+    peer.ontrack = ev => {
+        audio.srcObject = ev.streams[0]
+        callbacks.outputStream(ev.streams[0])
+        void audio.play().catch(()=>callbacks.status("Allow playback to hear the response."))
+    }
     channel.onopen = () => callbacks.status("Listening · live voice")
+    let partial = ""
     channel.onmessage = ev => {
         if (signal.aborted) return
         const event = JSON.parse(ev.data)
         if(event.type==="error"){callbacks.status("Voice connection reported an error. End the session to reconnect.");return}
-        if(event.type==="input_audio_buffer.speech_started"){generation++;pendingSpeech=undefined;callbacks.status("Hearing you…");return}
+        if(event.type==="input_audio_buffer.speech_started"){generation++;partial="";pendingSpeech=undefined;callbacks.status("Hearing you…");return}
+        if(event.type==="conversation.item.input_audio_transcription.delta"){
+            partial += String(event.delta || "")
+            callbacks.heard(partial)
+            return
+        }
         if(event.type==="output_audio_buffer.stopped" || event.type==="output_audio_buffer.cleared"){
             audioPlaying=false
             const next=pendingSpeech
@@ -75,6 +87,7 @@ export async function startRealtime(access:RealtimeAccess, signal:AbortSignal, c
     try {
         mic = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}})
         if(signal.aborted)throw new Error("Session ended.")
+        callbacks.inputStream(mic)
         mic.getAudioTracks().forEach(track=>peer.addTrack(track,mic!))
         const offer = await peer.createOffer()
         await peer.setLocalDescription(offer)

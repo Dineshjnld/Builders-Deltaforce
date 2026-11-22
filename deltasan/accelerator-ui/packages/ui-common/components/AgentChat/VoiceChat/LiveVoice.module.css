@@ -1,0 +1,35 @@
+.paper:global(.MuiPaper-root) {border-radius:24px;background:#0b172a;color:#f4f8ff;margin:16px;max-height:calc(100dvh - 32px);width:min(440px,calc(100% - 32px))}
+.panel {padding:clamp(18px,5vw,30px);color:#f4f8ff;background:radial-gradient(ellipse at 50% 34%,#173758 0,transparent 58%),#0b172a;font:15px/1.45 system-ui,sans-serif}
+.header {display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.header p,.header h2,.privacy p,.transcript p {margin:0}
+.header p {color:#b5ccdd;font-size:13px;overflow-wrap:anywhere}
+.header h2 {font-size:clamp(26px,5vw,34px);font-weight:550;line-height:1.15;letter-spacing:-.04em}
+.panel button {cursor:pointer;font:inherit}
+.panel button:focus-visible,.panel input:focus-visible {outline:3px solid #8ce4ff;outline-offset:3px}
+.close {flex:none;width:40px;height:40px;border:1px solid #50647d;background:transparent;color:#fff;font-size:24px!important;border-radius:50%}
+.stage {display:grid;place-items:center;height:clamp(124px,24dvh,202px);overflow:hidden}
+.orb {position:relative;width:clamp(92px,13vh,116px);aspect-ratio:1;border-radius:50%;isolation:isolate;overflow:hidden;background:radial-gradient(ellipse at 36% 23%,#e1fffa 0,#6de5dd 23%,#258ac4 53%,#203988 75%,#131c48);box-shadow:0 0 42px #40bffc44,inset -5px -7px 20px #06154295;transform:scale(var(--voice-scale,1));transition:transform 90ms linear,filter .4s}
+.orb i {position:absolute;inset:28% -45% -38%;border-radius:47%;background:linear-gradient(110deg,#1757ac20,#a7ecffbc 44%,#c9baff8c 52%,#2348aa90 68%);animation:flow 9s linear infinite}
+.orb i:nth-child(2) {inset:43% -37% -22%;animation-duration:13s;animation-direction:reverse}
+.orb i:nth-child(3) {inset:56% -30% -34%;animation-duration:11s}
+.panel[data-phase="muted"] .orb {filter:saturate(.15)}
+.panel[data-phase="speaking"] .orb {filter:hue-rotate(23deg)}
+.panel[data-phase="working"] .orb {filter:hue-rotate(-18deg)}
+.panel[data-phase="idle"] .orb i,.panel[data-phase="muted"] .orb i {animation-play-state:paused}
+.status,.languages {text-align:center;overflow-wrap:anywhere}
+.status {font-size:18px;font-weight:600;margin:0}
+.languages {color:#b5ccdd;margin:4px 0 16px;font-size:13px}
+.privacy,.transcript {padding:12px 14px;background:#102039;border:1px solid #364b64;border-radius:14px}
+.privacy label {display:flex;gap:9px;align-items:center;font-weight:600}
+.privacy input {accent-color:#84eddf;width:17px;height:17px}
+.privacy p {margin-top:5px;color:#bfd0de;font-size:13px}
+.transcript {max-height:23dvh;overflow:auto;overflow-wrap:anywhere;white-space:pre-wrap}
+.transcript p + p {margin-top:8px}
+.transcript strong {display:block;color:#9ed9dc;font-size:12px}
+.controls {margin-top:18px;display:flex;gap:10px;justify-content:center}
+.controls button {min-height:44px;flex:1;border-radius:24px;background:#233952;border:1px solid #50647d;color:#fff;font-weight:600}
+.controls .start {background:#9ce9e0;color:#092624;border-color:transparent}
+.controls .end {background:#482934;color:#ffe8ed;border-color:#915466}
+.controls button:disabled {opacity:.55}
+@keyframes flow {to {transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.orb,.orb i {animation:none;transition:none;transform:none}}
