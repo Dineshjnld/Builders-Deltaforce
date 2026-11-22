@@ -3,7 +3,7 @@ import type {NextApiRequest,NextApiResponse} from "next"
 import {readFile,writeFile,rename} from "node:fs/promises"
 import {randomUUID} from "node:crypto"
 import {compile,integrations,type Catalog,type Graph} from "../../components/studioGraph"
-const root="/delta-registry"
+const root=process.env["DELTA_REGISTRY"] || "/delta-registry"
 let queue=Promise.resolve()
 async function catalog():Promise<Catalog>{
     try{

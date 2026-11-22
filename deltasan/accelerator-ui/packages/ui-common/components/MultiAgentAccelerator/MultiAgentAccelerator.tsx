@@ -855,7 +855,7 @@ export const MultiAgentAccelerator: FC<MultiAgentAcceleratorProps> = ({
 
         // Show tour modal after a delay
         const timer = setTimeout(() => {
-            setTourModalOpen(true)
+            if (!document.querySelector('[role="dialog"]')) setTourModalOpen(true)
         }, SHOW_TOUR_DELAY_MS)
 
         return () => {

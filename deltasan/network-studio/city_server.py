@@ -13,13 +13,16 @@ import httpx
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pyhocon import ConfigFactory
+from ai_settings import select_theme
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 ROOT = Path(__file__).resolve().parent
 CITY = ROOT / "registries" / "city"
 INDEX = CITY / "deployments.json"
 TOKEN = os.environ["DELTA_CITY_TOKEN"]
-STUDIO = "http://127.0.0.1:45174"
+STUDIO = os.getenv("DELTA_STUDIO_URL", "http://127.0.0.1:45174")
+CUSTOMER = os.getenv("DELTA_CUSTOMER_ORIGIN", "http://127.0.0.1:45192").rstrip("/")
+CITY_ORIGIN = os.getenv("DELTA_CITY_ORIGIN", "http://127.0.0.1:45187")
 app = FastAPI(title="DeltaSAN Deployments")
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "host.docker.internal"])
 lock = asyncio.Lock()
@@ -55,7 +58,7 @@ async def restore():
 @app.middleware("http")
 async def authorize_changes(request: Request, call_next):
     if request.method not in ("HEAD", "GET", "OPTIONS"):
-        own_origin = request.headers.get("origin") in {"http://127.0.0.1:45187", "http://localhost:45187"}
+        own_origin = request.headers.get("origin") in {CITY_ORIGIN, CITY_ORIGIN.replace("127.0.0.1","localhost")}
         token_ok = hmac.compare_digest(request.headers.get("authorization", ""), "Bearer " + TOKEN)
         if not own_origin and not token_ok:
             return JSONResponse({"detail": "Open the local deployment console or authenticate the publishing request."}, 403)
@@ -79,7 +82,8 @@ def validate_source(content):
     limit = spec.get("max_execution_seconds", 120)
     if not isinstance(limit, int) or not 1 <= limit <= 300:
         raise ValueError("The execution limit must be between 1 and 300 seconds.")
-    catalog = {"https://mcp.deepwiki.com/mcp", "https://api.you.com/mcp?profile=free", "http://127.0.0.1:45186/mcp"}
+    catalog = {"https://mcp.deepwiki.com/mcp", "https://api.you.com/mcp?profile=free", "http://127.0.0.1:45186/mcp",
+               "http://127.0.0.1:45210/mcp","http://127.0.0.1:45211/mcp","https://mcp.mospi.gov.in/"}
     catalog_file = ROOT / "registries/deltaforce/tools.catalog"
     if catalog_file.exists():
         catalog.update(entry["target"] for entry in json.loads(catalog_file.read_text()).values() if entry.get("type") == "MCP")
@@ -107,7 +111,7 @@ def validate_source(content):
 async def runtime_networks():
     try:
         async with httpx.AsyncClient(timeout=4) as client:
-            r = await client.get("http://127.0.0.1:45184/api/v1/list")
+            r = await client.get(os.getenv("DELTA_RUNTIME_URL","http://127.0.0.1:45184") + "/api/v1/list")
             r.raise_for_status()
             return {a["agent_name"] for a in r.json()["agents"]}
     except (httpx.HTTPError, ValueError, KeyError):
@@ -119,13 +123,14 @@ def describe(key, row, live):
     status = "stopped" if not row["enabled"] else "ready" if live is not None and network in live else "building"
     if status == "building" and time.time() - row["updated"] > 150:
         status = "failed"
-    return {**row, "id": key, "status": status, "network": network, "url": STUDIO + "/multiAgentAccelerator?network=city%2F" + key,
+    return {**row, "id": key, "status": status, "network": network, "url": CUSTOMER + "/chat/" + key,
+            "playground_url": os.getenv("DELTA_PUBLIC_STUDIO_ORIGIN", STUDIO) + "/playground?network=city%2F" + key,
             "error": "Runtime did not report this network as loaded." if status == "failed" else None}
 
 
 @app.get("/app/")
 async def console():
-    return FileResponse(ROOT / "city.html", headers={"Content-Security-Policy": "frame-ancestors 'self' http://127.0.0.1:45174 http://localhost:45174"})
+    return FileResponse(ROOT / "city.html", headers={"Content-Security-Policy": "frame-ancestors 'self' " + STUDIO + " " + STUDIO.replace("127.0.0.1","localhost")})
 
 
 @app.get("/health")
@@ -153,12 +158,15 @@ async def deploy(file: UploadFile = File(...), name: str = Form(...), org_name: 
     except (ValueError, TypeError) as exc:
         raise HTTPException(422, str(exc)) from exc
     key = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:48] + "_" + uuid.uuid4().hex[:12]
+    theme = await select_theme({"name":name,"description":str(spec["tools"][0].get("function",{}).get("description",""))[:500]})
     async with lock:
         entries = records()
         if any(r["name"].casefold() == name.casefold() and r["org_name"].casefold() == org_name.casefold() for r in entries.values()):
             raise HTTPException(409, "This organization already has a deployment with that name.")
         atomic_write(CITY / (key + ".hocon"), '{\ninclude "config/llm_config.hocon"\n' + json.dumps(spec, indent=2)[1:])
-        entries[key] = {"name": name, "org_name": org_name, "updated": time.time(), "enabled": True,
+        entries[key] = {"name": name, "org_name": org_name, "theme": theme, "updated": time.time(), "enabled": True,
+                        "display_name": re.sub(r"_[0-9a-f]{12}$", "", name).replace("_", " "),
+                        "description": str(spec["tools"][0].get("function",{}).get("description",""))[:500],
                         "agents": [t["name"] for t in spec["tools"] if "toolbox" not in t],
                         "connections": [{"from": t["name"], "to": dest} for t in spec["tools"] for dest in t.get("tools", [])]}
         commit(entries)

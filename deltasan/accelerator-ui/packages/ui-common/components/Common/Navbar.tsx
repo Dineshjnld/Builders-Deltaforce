@@ -102,8 +102,8 @@ export interface NavbarProps {
 
 // Page links shown in the middle of the bar
 const NAV_LINKS = [
-    {id:"nav-link-studio",label:"Agent Studio",path:"/multiAgentAccelerator"},
-    {id:"nav-link-new",label:"New network",path:"/multiAgentAccelerator?network=agent_network_designer"},
+    {id:"nav-link-new",label:"New agent",path:"/multiAgentAccelerator?network=agent_network_designer"},
+    {id:"nav-link-playground",label:"Playground",path:"/playground"},
     {id:"nav-link-deployments",label:"Deployments",path:"/deploy"},
 ] as const
 
@@ -254,7 +254,7 @@ export const Navbar = ({
 
     // Page link the indicator currently sits under: the hovered one, else the current page
     const [hoveredLink, setHoveredLink] = useState<string | null>(null)
-    const activeLink = NAV_LINKS.find((link) => link.path === pathname)?.path ?? null
+    const activeLink = NAV_LINKS.find((link) => link.path.split("?")[0] === pathname)?.path ?? null
     const indicatorLink = hoveredLink ?? activeLink
 
     // Customer for branding
@@ -339,7 +339,7 @@ export const Navbar = ({
                                 : "/"
                         }
                     >
-                        {logo} {pathname === "/multiAgentAccelerator" ? "DeltaSAN" : "Workspace"}
+                        DeltaSAN
                     </a>
                 </Typography>
             </Grid>
@@ -515,11 +515,11 @@ export const Navbar = ({
                     id="explore-neuro-san-studio"
                     key="explore-neuro-san-studio"
                     component="a"
-                    href="/"
+                    href="/playground"
                     rel="noopener noreferrer"
                     target="_blank"
                 >
-                    Agent Studio
+                    Playground
                 </MenuItem>
                 <MenuItem
                     id="explore-neuro-san"
@@ -529,7 +529,7 @@ export const Navbar = ({
                     rel="noopener noreferrer"
                     target="_blank"
                 >
-                    New agent network
+                    New agent
                 </MenuItem>
             </Menu>
 

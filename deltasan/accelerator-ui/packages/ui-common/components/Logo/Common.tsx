@@ -1,1 +1,1 @@
-export const getCognizantLogoImage = () => <a aria-label="DeltaForce intake" href="/" style={{color:"#c1e695",fontSize:34,textDecoration:"none"}}>Δ</a>
+export const getCognizantLogoImage = () => <a aria-label="DeltaForce" href="/multiAgentAccelerator?network=agent_network_designer"><img src="/deltaforce-logo-dark.svg" alt="DeltaForce" width="124" style={{display:"block", objectFit:"contain", background:"#101b32", borderRadius:5}} /></a>

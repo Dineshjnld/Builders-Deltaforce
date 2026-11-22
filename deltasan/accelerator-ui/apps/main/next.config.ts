@@ -43,7 +43,7 @@ const nextConfig: import("next").NextConfig = {
     },
 
     output: "standalone",
-    experimental: {proxyTimeout: 180000},
+    experimental: {proxyTimeout: 180000, ...(process.env.DELTA_BUILD_CPUS ? {cpus: Number(process.env.DELTA_BUILD_CPUS)} : {})},
 
     images: {
         // See: https://nextjs.org/docs/app/api-reference/components/image#remotepatterns
@@ -61,8 +61,8 @@ const nextConfig: import("next").NextConfig = {
         ],
     },
 
-    redirects: async () => ["/", "/harness", "/UserGuide"].map(source=>({source,destination:"/multiAgentAccelerator",permanent:false})),
-    rewrites: async () => [{ source: "/api/v1/:path*", destination: "http://host.docker.internal:45184/api/v1/:path*" }],
+    redirects: async () => ["/", "/studio/new", "/harness", "/UserGuide"].map(source=>({source,destination:"/multiAgentAccelerator?network=agent_network_designer",permanent:false})),
+    rewrites: async () => [{ source: "/api/v1/:path*", destination: (process.env.DELTA_RUNTIME_URL || "http://host.docker.internal:45184") + "/api/v1/:path*" }],
     poweredByHeader: false,
 
     // Disable dev tools icon

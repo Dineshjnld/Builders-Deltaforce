@@ -1,5 +1,8 @@
 export type Catalog=Record<string,{label:string;type:string;target:string;description:string}>
 export const integrations:Catalog = {
+    gov_services:{label:"AP & Telangana public services",type:"MCP",target:"http://127.0.0.1:45210/mcp",description:"Find and read official sources for municipal, health, education and welfare guidance."},
+    gov_weather:{label:"IMD regional weather",type:"MCP",target:"http://127.0.0.1:45211/mcp",description:"Read meteorological centre observations for Andhra Pradesh and Telangana."},
+    mospi:{label:"MoSPI official statistics",type:"MCP",target:"https://mcp.mospi.gov.in/",description:"Query official eSankhyiki datasets, indicators and metadata."},
     clock:{label:"Local clock",type:"MCP",target:"http://127.0.0.1:45186/mcp",description:"Current date and time in an IANA time zone."},
     docs:{label:"DeepWiki",type:"MCP",target:"https://mcp.deepwiki.com/mcp",description:"Read documentation for public repositories."},
     search:{label:"You.com search",type:"MCP",target:"https://api.you.com/mcp?profile=free",description:"Find public web sources."},
@@ -46,7 +49,10 @@ export function compile(g:Graph,catalog:Catalog=integrations){
         const outgoing=g.routes.filter(r=>r.from===a.id).map(r=>({name:g.agents.find(n=>n.id===r.to)!.name,when:r.when.trim()}))
         const directions=outgoing.map(r=>"Call "+r.name+" when "+(r.when||"its assignment is relevant")+".").join("\n")
         return {name:a.name,function:{description:a.task,...(i?{parameters:{type:"object",properties:{assignment:{type:"string",description:"Task and supporting context"}},required:["assignment"]}}:{})},
-            instructions:[a.task,directions,a.tools.length?"Use the assigned tools when the request needs their information.":""].filter(Boolean).join("\n"),
+            instructions:[a.task,directions,
+                outgoing.length ? "When a route matches, call its agent with the user's goal, relevant facts, and the specific result you need. Use each distinct assignment once. Incorporate the returned findings and identify any unresolved question." : "",
+                i ? "Return your result to the calling agent. Preserve source references and flag missing information." : "Reply in the user's requested language.",
+                a.tools.length?"Use the assigned tools when the request needs their information.":""].filter(Boolean).join("\n"),
             tools:[...outgoing.map(r=>r.name),...new Set(a.tools.map(t=>catalog[t].target))]}
     })
     if(g.agents.some(a=>a.tools.includes("fetch")))tools.push({name:"web_fetch",toolbox:"web_fetch"})

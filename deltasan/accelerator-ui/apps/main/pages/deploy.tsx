@@ -11,6 +11,8 @@ const defaultServer = "https://agentic-city.decisionai.ml"
 function cityAddress(server: string, view: View) {
     try {
         const url = new URL(server)
+        if (typeof window !== "undefined" && window.location.protocol === "https:" && url.hostname === "127.0.0.1")
+            return new URL("/city/app/#" + view, window.location.origin).href
         if (url.username || url.password || (url.protocol !== "https:" &&
             !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))) return ""
         if (typeof window !== "undefined" && url.origin === window.location.origin) return ""
@@ -30,7 +32,7 @@ export default function Deployments() {
     const [status, setStatus] = useState("")
     const [working, setWorking] = useState(false)
     const cityUrl = cityAddress(server, view)
-    const city = cityUrl && server === "http://127.0.0.1:45187" && publishing.orgName
+    const city = cityUrl && server.startsWith("http://127.0.0.1:") && publishing.orgName
         ? cityUrl.replace("/app/#", "/app/?org=" + encodeURIComponent(publishing.orgName) + "#") : cityUrl
     const canPublish = enabled && server.replace(/\/$/, "") === configuredServer?.replace(/\/$/, "")
     const download = "/api/studio?format=hocon&id=" + encodeURIComponent(selected)

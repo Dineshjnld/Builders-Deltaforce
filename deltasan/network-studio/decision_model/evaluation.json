@@ -1,0 +1,49 @@
+{
+  "base": "sentence-transformers/all-MiniLM-L6-v2",
+  "revision": "c9745ed1d9f207416be6d2e6f8de32d1f16199bf",
+  "seed": 431,
+  "teacher_trainable_parameters": 1775619,
+  "training_examples": 167,
+  "held_out_examples": 36,
+  "routes": [
+    "gov_services",
+    "gov_weather",
+    "none"
+  ],
+  "confusion_rows_true_columns_predicted": [
+    [
+      11,
+      0,
+      1
+    ],
+    [
+      0,
+      10,
+      2
+    ],
+    [
+      0,
+      0,
+      12
+    ]
+  ],
+  "held_out_correct": 33,
+  "errors": [
+    {
+      "query": "Build an assistant for property tax enquiries in GHMC wards.",
+      "expected": "gov_services",
+      "predicted": "none"
+    },
+    {
+      "query": "Build an assistant that compares upcoming rainfall across two mandals.",
+      "expected": "gov_weather",
+      "predicted": "none"
+    },
+    {
+      "query": "రేపు ఖమ్మంలో వర్షం పడే అవకాశం ఉందా",
+      "expected": "gov_weather",
+      "predicted": "none"
+    }
+  ],
+  "runtime_bytes": 44784
+}

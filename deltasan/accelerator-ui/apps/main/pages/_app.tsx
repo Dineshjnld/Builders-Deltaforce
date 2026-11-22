@@ -368,7 +368,7 @@ export const NeuroSanUI: FC<ExtendedAppProps> = ({Component, pageProps}): ReactJ
     } else {
         const appShell = (
             <ErrorBoundary id="error_boundary">
-                {(pathname === TOUR_PAGE_PATH || pathname === "/deploy") && <NavbarWrapper
+                {(pathname === TOUR_PAGE_PATH || pathname === "/playground" || pathname === "/deploy") && <NavbarWrapper
                     enableAuthentication={enableAuthentication}
                     authenticationType={authenticationType}
                     id="nav-bar"
@@ -417,7 +417,7 @@ export const NeuroSanUI: FC<ExtendedAppProps> = ({Component, pageProps}): ReactJ
                 <link
                     id="unileaf-link"
                     rel="icon"
-                    href="/delta.svg"
+                    href="/deltaforce-logo.svg"
                 />
             </Head>
             {enableGoogleAnalytics && gaMeasurementID && <GoogleAnalytics gaMeasurementID={gaMeasurementID} />}
@@ -430,7 +430,7 @@ export const NeuroSanUI: FC<ExtendedAppProps> = ({Component, pageProps}): ReactJ
                         defaultMode="dark"
                     >
                         <CssBaseline />
-                        {pathname === TOUR_PAGE_PATH || pathname === "/deploy" ? body : <OperationsShell>{body}</OperationsShell>}
+                        {pathname === TOUR_PAGE_PATH || pathname === "/playground" || pathname === "/deploy" ? body : <OperationsShell>{body}</OperationsShell>}
                         <CommandPalette
                             logoServiceToken={logoServiceToken}
                             onNavigate={navigate}
@@ -453,4 +453,11 @@ export const NeuroSanUI: FC<ExtendedAppProps> = ({Component, pageProps}): ReactJ
     )
 }
 
-export default NeuroSanUI
+const customerTheme = createAppTheme()
+export default function App(props: ExtendedAppProps) {
+    if (props.router.pathname === "/chat/[id]") {
+        const {Component, pageProps} = props
+        return <ThemeProvider theme={customerTheme} defaultMode="dark"><CssBaseline/><Component {...pageProps}/></ThemeProvider>
+    }
+    return <NeuroSanUI {...props}/>
+}

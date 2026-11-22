@@ -25,7 +25,6 @@ import DataObjectIcon from "@mui/icons-material/DataObject"
 import TuneIcon from "@mui/icons-material/Tune"
 import Box from "@mui/material/Box"
 import Checkbox from "@mui/material/Checkbox"
-import CircularProgress from "@mui/material/CircularProgress"
 import IconButton from "@mui/material/IconButton"
 import Input from "@mui/material/Input"
 import InputAdornment from "@mui/material/InputAdornment"
@@ -86,8 +85,7 @@ import {ConfirmationModal} from "../../Common/ConfirmationModal"
 import {AGENT_NETWORK_DESIGNER_ID} from "../../MultiAgentAccelerator/const"
 import {CombinedAgentType, givesFinalAnswer, isLegacyAgentType} from "../Common/Types"
 import {chatMessageFromChunk, checkError} from "../Common/Utils"
-import {MicrophoneButton} from "../VoiceChat/MicrophoneButton"
-import {cleanupAndStopSpeechRecognition, setupSpeechRecognition, SpeechRecognitionState} from "../VoiceChat/VoiceChat"
+import {LiveVoice} from "../VoiceChat/LiveVoice"
 
 //#region Types and Interfaces
 export interface ChatCommonProps {
@@ -377,20 +375,11 @@ export const ChatCommon = ({ref, ...props}: ChatCommonProps & {ref?: Ref<ChatCom
 
     // Ref copy of current turns, so we can safely use it in callbacks without worrying about stale closures
     const turnsRef = useRef<ConversationTurn[]>([])
-
-    // Microphone state for voice input
-    const [isMicOn, setIsMicOn] = useState<boolean>(false)
-
-    // Ref for speech recognition
-    const speechRecognitionRef = useRef<SpeechRecognition | null>(null)
-
-    // Voice state for speech recognition
-    const [voiceInputState, setVoiceInputState] = useState<SpeechRecognitionState>({
-        currentTranscript: "",
-        finalTranscript: "",
-        isListening: false,
-        isProcessingSpeech: false,
-    })
+    const spokenAnswer = useRef("")
+    const sending = useRef(false)
+    const [handoff, setHandoff] = useState("")
+    const [activity, setActivity] = useState<string[]>([])
+    useEffect(() => {setActivity([])},[selectedNetwork])
 
     // Define styles based on user options (wrap setting)
     const divStyle: CSSProperties = shouldWrapOutput
@@ -415,13 +404,6 @@ export const ChatCommon = ({ref, ...props}: ChatCommonProps & {ref?: Ref<ChatCom
         [selectedNetwork, useNativeNames]
     )
 
-    useEffect(() => {
-        // Set up speech recognition
-        const handlers = setupSpeechRecognition(setChatInput, setVoiceInputState, speechRecognitionRef)
-
-        // Clean up function
-        return () => cleanupAndStopSpeechRecognition(speechRecognitionRef, handlers)
-    }, [])
 
     useEffect(() => {
         // Delay for a second before focusing on the input area; gets around ChatBot stealing focus.
@@ -490,6 +472,11 @@ export const ChatCommon = ({ref, ...props}: ChatCommonProps & {ref?: Ref<ChatCom
             }
 
             // Shallow merge existing slyData with incoming chatMessage.sly_data.
+            const event = (chatMessage.structure as {builder_activity?:{sender:string;recipient:string;detail:string}} | undefined)?.builder_activity
+            if (event && typeof event.detail === "string") {
+                setActivity(rows => [...rows.slice(-19),event.sender+" → "+event.recipient+" · "+event.detail])
+                return
+            }
             // Defense in depth: never let BYOK API keys enter the persistent store, even if a network echoes
             // them back -- the store is displayed and exportable via the sly_data editor.
             if (chatMessage.sly_data) {
@@ -520,8 +507,15 @@ export const ChatCommon = ({ref, ...props}: ChatCommonProps & {ref?: Ref<ChatCom
                 // The backend sometimes sends messages with no text content, and we don't want to display those to the
                 // user. Agent name is the last tool in the origin array. If it's not there, use a default name.
                 const agentName = chatMessage.origin?.at(-1)?.tool ?? "agent"
+                const path = chatMessage.origin?.map(origin => origin.tool).filter(Boolean)
+                if (path && path.length > 1) setHandoff(path.join(" → "))
+                if (chatMessage.text?.trim() && chatMessage.type === ChatMessageType.AGENT_FRAMEWORK) {
+                    spokenAnswer.current = chatMessage.text
+                }
                 addTurn({
-                    agentName,
+                    agentName: chatMessage.origin?.length > 1
+                        ? chatMessage.origin.map(origin => origin.tool).filter(Boolean).join(" → ")
+                        : agentName,
                     id: uuid(),
                     messageType: chatMessage.type,
                     role: MessageRole.Agent,
@@ -562,7 +556,6 @@ export const ChatCommon = ({ref, ...props}: ChatCommonProps & {ref?: Ref<ChatCom
     const resetState = useCallback(() => {
         // Reset state, whatever happened during request
         setIsAwaitingLlm(false)
-        setChatInput("")
 
         setPreviousResponse?.(selectedNetwork, currentResponse.current)
         currentResponse.current = ""
@@ -752,13 +745,22 @@ export const ChatCommon = ({ref, ...props}: ChatCommonProps & {ref?: Ref<ChatCom
     }, [selectedNetwork, updateChatHistory])
 
     const handleSend = useCallback(
-        async (query: string) => {
+        async (query: string, spokenLanguage?: string) => {
             // Record user query in chat history. Discard anything beyond MAX_CHAT_HISTORY_ITEMS
+            if (!query.trim() || sending.current) return
+            sending.current = true
+            spokenAnswer.current = ""
+            setHandoff("")
+            setActivity([])
+            setChatInput(previous => previous === query ? "" : previous)
             const userQueryMessage = new HumanMessage({content: query, id: uuid()})
             updateChatHistory(selectedNetwork, [userQueryMessage])
 
             // Allow parent to intercept and modify the query before sending if needed
-            const queryToSend = onSend?.(query) ?? query
+            const original = onSend?.(query) ?? query
+            const queryToSend = spokenLanguage
+                ? `${original}\n\nRespond concisely in ${spokenLanguage} for spoken playback.`
+                : original
 
             // Save query for "regenerate" use. Again we save the real user input, not the modified query. It will again
             // get intercepted and re-modified (if applicable) on "regenerate".
@@ -806,6 +808,7 @@ export const ChatCommon = ({ref, ...props}: ChatCommonProps & {ref?: Ref<ChatCom
                     }
                 }
             } finally {
+                sending.current = false
                 resetState()
 
                 // Allow parent components to do something when streaming is complete
@@ -1314,6 +1317,11 @@ export const ChatCommon = ({ref, ...props}: ChatCommonProps & {ref?: Ref<ChatCom
                     />
                 </Box>
                 {getThinking()}
+                {handoff && <Typography variant="caption" role="status">Agent handoff · {handoff}</Typography>}
+                {activity.length>0 && <Box role="log" aria-label="Network build activity" sx={{borderLeft:"2px solid",borderColor:"primary.main",pl:1.5,my:1}}>
+                    <Typography variant="overline">Network build activity</Typography>
+                    {activity.map((line,i)=><Typography key={i} display="block" variant="caption">{line}</Typography>)}
+                </Box>}
                 {getWorkingSpinner()}
                 {getControlButtons()}
             </Box>
@@ -1387,9 +1395,9 @@ export const ChatCommon = ({ref, ...props}: ChatCommonProps & {ref?: Ref<ChatCom
                     setChatInput(event.target.value)
                 }}
                 onKeyDown={async (event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
+                    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                         event.preventDefault()
-                        await handleSend(chatInput)
+                        if (shouldEnableSendButton) await handleSend(chatInput)
                     }
                 }}
                 value={chatInput}
@@ -1399,16 +1407,6 @@ export const ChatCommon = ({ref, ...props}: ChatCommonProps & {ref?: Ref<ChatCom
                         position="end"
                         disableTypography={true}
                     >
-                        {/* Voice processing spinner - shows only when actively speaking */}
-                        {voiceInputState.isProcessingSpeech && (
-                            <CircularProgress
-                                size={16}
-                                sx={{
-                                    color: "primary.main",
-                                    marginRight: "0.5rem",
-                                }}
-                            />
-                        )}
                         <IconButton
                             id="clear-input-button"
                             onClick={() => {
@@ -1429,13 +1427,12 @@ export const ChatCommon = ({ref, ...props}: ChatCommonProps & {ref?: Ref<ChatCom
             />
 
             <Box sx={{display: "flex", gap: "0.25rem", position: "relative", alignItems: "center"}}>
-                <MicrophoneButton
-                    isMicOn={isMicOn}
-                    onMicToggle={setIsMicOn}
-                    setVoiceInputState={setVoiceInputState}
-                    speechRecognitionRef={speechRecognitionRef}
-                    voiceInputState={voiceInputState}
-                />
+                <LiveVoice key={selectedNetwork} network={toDisplayName(selectedNetwork)} busy={isAwaitingLlm}
+                    onDictation={text => setChatInput(draft => [draft.trimEnd(), text].filter(Boolean).join(" "))}
+                    send={async (text, language) => {
+                        await handleSend(text, language)
+                        return spokenAnswer.current
+                    }} />
 
                 <SendButton
                     enableSendButton={shouldEnableSendButton}

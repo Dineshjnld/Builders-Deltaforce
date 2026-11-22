@@ -1,0 +1,405 @@
+[
+  {
+    "id": "ap-water",
+    "state": "Andhra Pradesh",
+    "department": "Municipal Administration",
+    "title": "New municipal water connections",
+    "url": "https://cdma.ap.gov.in/resources/citizen-charter/",
+    "topics": [
+      "water",
+      "connection",
+      "municipal",
+      "water supply",
+      "plumbing"
+    ],
+    "description": "Prepare the application checklist from the municipal charter and direct the resident to their urban local body for submission."
+  },
+  {
+    "id": "ap-water-repair",
+    "state": "Andhra Pradesh",
+    "department": "Municipal Administration",
+    "title": "Municipal water connection repairs",
+    "url": "https://cdma.ap.gov.in/resources/citizen-charter/",
+    "topics": [
+      "water",
+      "repair",
+      "leak",
+      "water bill",
+      "municipality"
+    ],
+    "description": "Identify documents requested for a repair and explain how to report the problem to the responsible municipality."
+  },
+  {
+    "id": "ap-property",
+    "state": "Andhra Pradesh",
+    "department": "Municipal Administration",
+    "title": "Property tax assessments and title changes",
+    "url": "https://cdma.ap.gov.in/resources/citizen-charter/",
+    "topics": [
+      "property tax",
+      "assessment",
+      "ownership",
+      "mutation",
+      "municipality"
+    ],
+    "description": "Distinguish a new tax assessment from a change of title and identify the corresponding municipal checklist."
+  },
+  {
+    "id": "ap-vital-records",
+    "state": "Andhra Pradesh",
+    "department": "Municipal Administration",
+    "title": "Birth and death registration",
+    "url": "https://cdma.ap.gov.in/resources/citizen-charter/",
+    "topics": [
+      "birth",
+      "death",
+      "certificate",
+      "registration",
+      "civil records"
+    ],
+    "description": "Find the relevant registration procedure and checklist using the event and elapsed time. The civil registrar issues the certificate."
+  },
+  {
+    "id": "ap-trade",
+    "state": "Andhra Pradesh",
+    "department": "Municipal Administration",
+    "title": "Municipal trade licences",
+    "url": "https://cdma.ap.gov.in/services/online-services/",
+    "topics": [
+      "trade license",
+      "trade licence",
+      "shop",
+      "merchant",
+      "renewal",
+      "urban local body"
+    ],
+    "description": "Help business owners find the trade licence service for their urban local body and continue on the official portal."
+  },
+  {
+    "id": "ap-sanitation",
+    "state": "Andhra Pradesh",
+    "department": "Municipal Administration",
+    "title": "Sewerage connections and charges",
+    "url": "https://cdma.ap.gov.in/services/online-services/",
+    "topics": [
+      "sewerage",
+      "sanitation",
+      "sewage",
+      "connection",
+      "municipal"
+    ],
+    "description": "Find the sewerage or combined water and sewerage service for a municipality. Send applicants to the official payment and application channels."
+  },
+  {
+    "id": "ap-land",
+    "state": "Andhra Pradesh",
+    "department": "Revenue",
+    "title": "MeeBhoomi land record navigation",
+    "url": "https://tirupati.ap.gov.in/service/land-records/",
+    "topics": [
+      "land",
+      "meebhoomi",
+      "passbook",
+      "khata",
+      "land records",
+      "property"
+    ],
+    "description": "Explain where to view land records or an electronic passbook. The resident performs the personal lookup on MeeBhoomi."
+  },
+  {
+    "id": "ap-grievance",
+    "state": "Andhra Pradesh",
+    "department": "Kakinada District Administration",
+    "title": "Public grievance intake and routing",
+    "url": "https://kakinada.ap.gov.in/service/how-to-lodge-a-grievance/",
+    "topics": [
+      "grievance",
+      "complaint",
+      "petition",
+      "redressal",
+      "kakinada"
+    ],
+    "description": "Help a petitioner prepare a concise grievance and find the official route for lodging it. The receiving office provides the acknowledgement."
+  },
+  {
+    "id": "ap-agriculture",
+    "state": "Andhra Pradesh",
+    "department": "Tirupati District Agriculture Department",
+    "title": "Soil and irrigation-water testing in Tirupati",
+    "url": "https://tirupati.ap.gov.in/agriculture/",
+    "topics": [
+      "agriculture",
+      "farmer",
+      "soil testing",
+      "water testing",
+      "rythu",
+      "soil health card"
+    ],
+    "description": "Guide farmers to the district soil testing laboratory or Mandal Agriculture Officer for sample analysis and soil health card guidance."
+  },
+  {
+    "id": "ap-irrigation",
+    "state": "Andhra Pradesh",
+    "department": "Nellore District Micro Irrigation Project",
+    "title": "Drip and sprinkler irrigation assistance",
+    "url": "https://spsnellore.ap.gov.in/a-p-micro-irrigation-project-apmip/",
+    "topics": [
+      "agriculture",
+      "irrigation",
+      "drip",
+      "sprinkler",
+      "nellore",
+      "horticulture"
+    ],
+    "description": "Explain the Nellore micro-irrigation registration route through the local Rythu Seva Kendra. Project officials process the application."
+  },
+  {
+    "id": "ap-scholarship",
+    "state": "Andhra Pradesh",
+    "department": "Social Welfare",
+    "title": "JnanaBhumi scholarship navigation",
+    "url": "https://jnanabhumi.ap.gov.in/",
+    "topics": [
+      "education",
+      "scholarship",
+      "student",
+      "post matric",
+      "jnanabhumi",
+      "college"
+    ],
+    "description": "Help a student distinguish scholarship services and identify the college or portal step. Institutions verify individual applications."
+  },
+  {
+    "id": "ap-health",
+    "state": "Andhra Pradesh",
+    "department": "Health, Medical and Family Welfare",
+    "title": "Vaidya Seva hospital help desks",
+    "url": "https://spsnellore.ap.gov.in/dr-nandamuri-taraka-rama-rao-vaidyaseva-trust/",
+    "topics": [
+      "healthcare",
+      "health",
+      "hospital",
+      "vaidya",
+      "referral",
+      "scheme"
+    ],
+    "description": "Explain the administrative role of a Vaidya Mithra help desk and route scheme or network-hospital questions to the official service."
+  },
+  {
+    "id": "ap-planning",
+    "state": "Andhra Pradesh",
+    "department": "Capital Region Development Authority",
+    "title": "Capital region planning services",
+    "url": "https://crda.ap.gov.in/apcrdav2/views/citizenservices.aspx",
+    "topics": [
+      "planning",
+      "development",
+      "amaravati",
+      "capital region",
+      "crda",
+      "certificate"
+    ],
+    "description": "Locate the capital region authority service for the requested certificate, plot enquiry or planning grievance."
+  },
+  {
+    "id": "tg-income",
+    "state": "Telangana",
+    "department": "Revenue",
+    "title": "MeeSeva income certificate guidance",
+    "url": "https://www.telangana.gov.in/services/state-services/",
+    "topics": [
+      "meeseva",
+      "income",
+      "certificate",
+      "revenue",
+      "benefits"
+    ],
+    "description": "Help residents identify the income certificate service and send them to the official application channel. Revenue officials verify and issue certificates."
+  },
+  {
+    "id": "tg-ration",
+    "state": "Telangana",
+    "department": "Civil Supplies",
+    "title": "Ration card corrections and printing",
+    "url": "https://www.telangana.gov.in/services/meeseva-services/",
+    "topics": [
+      "food",
+      "ration card",
+      "civil supplies",
+      "correction",
+      "public distribution"
+    ],
+    "description": "Identify the relevant MeeSeva civil supplies service for a household correction or card-related request."
+  },
+  {
+    "id": "tg-birth",
+    "state": "Telangana",
+    "department": "Revenue and Municipal Administration",
+    "title": "Late birth registration guidance",
+    "url": "https://www.telangana.gov.in/services/meeseva-services/",
+    "topics": [
+      "birth",
+      "registration",
+      "certificate",
+      "hyderabad",
+      "civil records"
+    ],
+    "description": "Help residents distinguish late registration services and find the listed form applicable to their district."
+  },
+  {
+    "id": "tg-land",
+    "state": "Telangana",
+    "department": "Revenue",
+    "title": "Bhu Bharati land records and grievances",
+    "url": "https://bhubharati.telangana.gov.in/Bhubharati_faq",
+    "topics": [
+      "land",
+      "bhu bharati",
+      "passbook",
+      "pattadar",
+      "mutation",
+      "grievance"
+    ],
+    "description": "Use the Revenue Department FAQ to locate the process for a passbook, a record correction or a specific land grievance. Officials decide cases."
+  },
+  {
+    "id": "tg-scholarship",
+    "state": "Telangana",
+    "department": "Social Welfare",
+    "title": "ePASS scholarship routing",
+    "url": "https://www.telangana.gov.in/state-web-directory/",
+    "topics": [
+      "education",
+      "scholarship",
+      "epass",
+      "student",
+      "college",
+      "post matric"
+    ],
+    "description": "Locate the official ePASS scholarship portal. Students complete registration and check their individual status with the service."
+  },
+  {
+    "id": "tg-opd",
+    "state": "Telangana",
+    "department": "Health, Medical and Family Welfare",
+    "title": "Outpatient appointment navigation",
+    "url": "https://www.telangana.gov.in/services/state-services/",
+    "topics": [
+      "healthcare",
+      "hospital",
+      "opd",
+      "appointment",
+      "health",
+      "outpatient"
+    ],
+    "description": "Route a patient to the listed outpatient registration service. Appointment availability and booking are determined by the hospital system."
+  },
+  {
+    "id": "tg-water",
+    "state": "Telangana",
+    "department": "Hyderabad Metropolitan Water Supply and Sewerage Board",
+    "title": "Hyderabad water bill assistance",
+    "url": "https://www.telangana.gov.in/services/state-services/",
+    "topics": [
+      "water",
+      "bill",
+      "payment",
+      "hmwssb",
+      "hyderabad"
+    ],
+    "description": "Identify the official water bill service for Hyderabad residents. Customers view individual balances and pay through the board."
+  },
+  {
+    "id": "tg-power",
+    "state": "Telangana",
+    "department": "Power Distribution Companies",
+    "title": "Electricity connections and load changes",
+    "url": "https://www.telangana.gov.in/services/state-services/",
+    "topics": [
+      "electricity",
+      "power",
+      "connection",
+      "meter",
+      "load change",
+      "bill"
+    ],
+    "description": "Help a consumer distinguish new supply, load change and bill payment, then find the distribution company service."
+  },
+  {
+    "id": "tg-building",
+    "state": "Telangana",
+    "department": "Municipal Administration and Urban Development",
+    "title": "BuildNow building and layout approvals",
+    "url": "https://buildnow.telangana.gov.in/",
+    "topics": [
+      "building",
+      "permit",
+      "occupancy",
+      "construction",
+      "layout",
+      "municipality"
+    ],
+    "description": "Route building and layout permission questions to BuildNow and its published support channels. The competent planning authority approves applications."
+  },
+  {
+    "id": "tg-pension",
+    "state": "Telangana",
+    "department": "Social Welfare",
+    "title": "Pension service navigation",
+    "url": "https://www.telangana.gov.in/services/state-services/",
+    "topics": [
+      "pension",
+      "welfare",
+      "benefit",
+      "social security",
+      "senior citizen"
+    ],
+    "description": "Locate the pension service and help the resident prepare questions for the welfare office. The department determines eligibility."
+  },
+  {
+    "id": "tg-labour",
+    "state": "Telangana",
+    "department": "Labour",
+    "title": "Contractor licensing for migrant workers",
+    "url": "https://www.telangana.gov.in/services/state-services/",
+    "topics": [
+      "labour",
+      "labor",
+      "migrant",
+      "contractor",
+      "license",
+      "licence"
+    ],
+    "description": "Locate the Labour Department service for contractor licensing related to migrant workers. Route employers to the official application."
+  },
+  {
+    "id": "tg-disability",
+    "state": "Telangana",
+    "department": "Rural Development",
+    "title": "Disability assessment and support directory",
+    "url": "https://www.telangana.gov.in/state-web-directory/",
+    "topics": [
+      "disability",
+      "sadarem",
+      "assessment",
+      "disability certificate",
+      "accessibility"
+    ],
+    "description": "Identify the official SADAREM and disability support portals for assessment or service information."
+  },
+  {
+    "id": "tg-tourism",
+    "state": "Telangana",
+    "department": "Tourism",
+    "title": "Tour operator and accommodation registration",
+    "url": "https://www.telangana.gov.in/services/state-services/",
+    "topics": [
+      "tourism",
+      "hotel",
+      "tour operator",
+      "accommodation",
+      "registration"
+    ],
+    "description": "Direct a tourism business to the relevant listing for operator recognition or tourist accommodation registration."
+  }
+]

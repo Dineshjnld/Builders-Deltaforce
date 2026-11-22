@@ -87,7 +87,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
     }
     // The browser reaches the local City on loopback. Docker Desktop reaches the same host service here.
-    if (process.env["DELTA_LOCAL_CITY"] === "true" && target.origin === "http://127.0.0.1:45187") {
+    if (process.env["DELTA_LOCAL_CITY"] === "true" && target.origin === configured.origin && target.hostname === "127.0.0.1") {
         target.hostname = "host.docker.internal"
     }
 
