@@ -22,7 +22,9 @@ async def complete(req: Request):
         data = {**body, "model":model}
         if token and "max_tokens" in data:
             data["max_completion_tokens"] = data.pop("max_tokens")
-        client = httpx.AsyncClient(timeout=httpx.Timeout(125, connect=5))
+        # Leave time for a standby completion inside Studio's 120-second request budget.
+        timeout = 75 if token else (22 if key else 110)
+        client = httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=4))
         response = None
         try:
             # Never forward caller-supplied provider credentials.
@@ -30,7 +32,7 @@ async def complete(req: Request):
             request = client.build_request("POST",base+"/chat/completions",json=data,headers=headers)
             response = await client.send(request,stream=True)
             if response.status_code >= 400:
-                if response.status_code in (408,429) or response.status_code>=500:
+                if response.status_code in (408,429) or response.status_code>=500 or (not token and key and response.status_code==400 and body.get("response_format")):
                     await response.aclose()
                     await client.aclose()
                     continue
@@ -47,6 +49,10 @@ async def complete(req: Request):
             result = json.loads(await response.aread())
             if not result.get("choices"):
                 raise ValueError("Missing choices")
+            if body.get("response_format",{}).get("type")=="json_schema":
+                content = result["choices"][0].get("message",{}).get("content")
+                if not isinstance(content,str) or not isinstance(json.loads(content),dict):
+                    raise ValueError("Incomplete structured response")
             await response.aclose()
             await client.aclose()
             return Response(json.dumps(result),media_type="application/json")
