@@ -39,11 +39,9 @@ export default function Deployments() {
 
     useEffect(() => {
         const controller = new AbortController()
-        fetch("/api/v1/list", {signal: controller.signal}).then(async r => {
-            if (!r.ok) throw Error("Could not load the local network registry.")
-            const body = await r.json()
-            const names: string[] = body.agents.map((a: {agent_name: string}) => a.agent_name)
-                .filter((id: string) => /^deltaforce\/[a-z0-9_]+_[a-f0-9]{12}$/.test(id)).sort()
+        fetch("/api/studio?networks=1", {signal: controller.signal}).then(async r => {
+            if (!r.ok) throw Error("Could not load saved Studio networks.")
+            const names: string[] = await r.json()
             setSources(names)
             const requested = new URLSearchParams(window.location.search).get("network")
             select(names.includes(requested || "") ? requested! : names[0] || "")

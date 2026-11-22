@@ -1,6 +1,6 @@
 import {designFromChat} from "../../components/chatDesign"
 import type {NextApiRequest,NextApiResponse} from "next"
-import {readFile,writeFile,rename} from "node:fs/promises"
+import {readFile,writeFile,rename,readdir} from "node:fs/promises"
 import {randomUUID} from "node:crypto"
 import {compile,integrations,type Catalog,type Graph} from "../../components/studioGraph"
 const root=process.env["DELTA_REGISTRY"] || "/delta-registry"
@@ -25,6 +25,7 @@ async function publish(graph:Graph){
 export default async function handler(req:NextApiRequest,res:NextApiResponse){
     res.setHeader("Cache-Control","no-store")
     if(req.method==="GET"){
+        if(req.query.networks==="1")return res.json((await readdir(root)).filter(name=>/^[a-z0-9_]+_[a-f0-9]{12}\.studio$/.test(name)).sort().map(name=>"deltaforce/"+name.slice(0,-7)))
         if(req.query.catalog==="1")return res.json(await catalog())
         const id=req.query.id
         if(typeof id!=="string"||!/^deltaforce\/[a-z0-9_]+_[a-f0-9]{12}$/.test(id))return res.status(400).end()

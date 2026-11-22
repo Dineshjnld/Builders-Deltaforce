@@ -1,0 +1,60 @@
+name: deltasan-judge
+x-worker: &worker
+  image: deltasan-judge-runtime
+  pull_policy: never
+  network_mode: service:ui
+  working_dir: /studio
+  volumes:
+    - ./deltasan/network-studio:/studio
+    - conversations:/data
+  environment: &common
+    DELTA_AI_ENV: /studio/.judge.env
+    DELTA_STUDIO_URL: http://127.0.0.1:45220
+    DELTA_RUNTIME_URL: http://127.0.0.1:45224
+    DELTA_CITY_TOKEN: ${DELTA_CITY_TOKEN:-judge-local-only}
+    DELTA_CITY_ORIGIN: http://127.0.0.1:45222
+    DELTA_CUSTOMER_ORIGIN: http://127.0.0.1:45221
+    DELTA_PUBLIC_STUDIO_ORIGIN: http://127.0.0.1:45220
+    DELTA_CONVERSATIONS_DB: /data/customer.sqlite3
+    NSFLOW_PORT: 45225
+    NEURO_SAN_SERVER_HTTP_PORT: 45224
+    NEURO_SAN_SERVER_HOST: 127.0.0.1
+    NSFLOW_HOST: 127.0.0.1
+    PYTHONPATH: /studio
+services:
+  ui:
+    build: {context: ./deltasan/accelerator-ui, dockerfile: ../../judge-ui.Dockerfile}
+    ports: ["127.0.0.1:45220:45220","127.0.0.1:45221:45221","127.0.0.1:45222:45222"]
+    volumes: ["./deltasan/network-studio/registries/deltaforce:/delta-registry"]
+    environment:
+      PORT: 45220
+      HOSTNAME: 0.0.0.0
+      NEURO_SAN_SERVER_URL: http://127.0.0.1:45220
+      DELTA_QWEN_URL: http://127.0.0.1:45212/v1
+      DELTA_RUNTIME_URL: http://127.0.0.1:45224
+      ENABLE_AUTHENTICATION: "false"
+      ENABLE_PUBLISHING: "true"
+      DELTA_LOCAL_CITY: "true"
+      PUBLISH_SERVER_URL: http://127.0.0.1:45222
+      PUBLISH_BEARER_TOKEN: ${DELTA_CITY_TOKEN:-judge-local-only}
+      DELTA_CUSTOMER_SERVICE: http://127.0.0.1:45221
+      DELTA_VOICE_URL: http://127.0.0.1:8091
+      SUPPORT_EMAIL_ADDRESS: judge@localhost.invalid
+  model:
+    network_mode: service:ui
+    image: ghcr.io/ggml-org/llama.cpp@sha256:ae28f5c2046de51dfd00c9116a36fe44b5e8703ef730d0aea69082781eecb1f7
+    volumes: ["./var/models:/models:ro"]
+    command: ["-m","/models/qwen.gguf","--host","127.0.0.1","--port","45185","-c","8192","-t","4","--alias","local-qwen"]
+  inference: {<<: *worker, command: "uvicorn inference_gateway:app --port 45212"}
+  runtime: {<<: *worker, build: {context: ./judge-deps, dockerfile: ../judge-runtime.Dockerfile}, command: "ns run"}
+  publisher: {<<: *worker, command: "uvicorn city_server:app --host 0.0.0.0 --port 45222"}
+  customers: {<<: *worker, command: "uvicorn customer:app --host 0.0.0.0 --port 45221"}
+  services: {<<: *worker, command: "python government_mcp.py"}
+  weather: {<<: *worker, command: "python government_mcp.py weather"}
+  clock: {<<: *worker, command: "python local_clock_mcp.py"}
+  speech:
+    build: {context: ./deltasan/network-studio/voice, dockerfile: ../../../judge-speech.Dockerfile, additional_contexts: {wheels: ./judge-deps}}
+    network_mode: service:ui
+    volumes: ["./apps/android/app/src/main/assets/asr:/asr:ro","./var/models/hi:/hi:ro","./var/models/te:/te:ro"]
+volumes:
+  conversations:
