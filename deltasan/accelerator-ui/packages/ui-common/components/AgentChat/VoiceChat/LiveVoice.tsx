@@ -1,6 +1,7 @@
 import Button from "@mui/material/Button"
 import Dialog from "@mui/material/Dialog"
 import {useEffect, useId, useRef, useState} from "react"
+import ReactMarkdown from "react-markdown"
 import {startRealtime,type RealtimeAccess} from "./realtime"
 import styles from "./LiveVoice.module.css"
 
@@ -137,7 +138,10 @@ export function LiveVoice({network, busy, send, onDictation, realtime}: Props) {
             if(enabled){
                 try{
                     await startRealtime({endpoint,enabled,token:realtime?.token},signal,{
-                        status:setStatus,heard:setHeard,reply:setReply,send:(text,language)=>latestSend.current(text,language),
+                        status:setStatus,heard:text=>{
+                            setHeard(text)
+                            setDetected(/[ఀ-౿]/.test(text) ? "te" : /[ऀ-ॿ]/.test(text) ? "hi" : null)
+                        },reply:setReply,send:(text,language)=>latestSend.current(text,language),
                         inputStream:media=>watchAudio(media,true),outputStream:media=>watchAudio(media,false),
                         dictate:dictate ? text=>{onDictation(text);close()} : undefined
                     })
@@ -238,7 +242,9 @@ export function LiveVoice({network, busy, send, onDictation, realtime}: Props) {
                 <p className={styles["languages"]}>{detected ? languages[detected] : "English · हिन्दी · తెలుగు"}</p>
                 {active && (heard || reply) && <div className={styles["transcript"]} aria-label="Current exchange">
                     {heard && <p><strong>You</strong>{heard}</p>}
-                    {reply && <p><strong>{network}</strong>{reply}</p>}
+                    {reply && <div className={styles["answer"]}><strong>{network}</strong>
+                        <ReactMarkdown skipHtml unwrapDisallowed allowedElements={["p","strong","em","code","ul","ol","li","br"]}>{reply}</ReactMarkdown>
+                    </div>}
                 </div>}
                 {!active && <div className={styles["privacy"]}>
                     <label><input type="checkbox" checked={localSpeech || realtime?.enabled === false} disabled={realtime?.enabled === false} onChange={e=>setLocalSpeech(e.target.checked)}/> Use local speech processing</label>

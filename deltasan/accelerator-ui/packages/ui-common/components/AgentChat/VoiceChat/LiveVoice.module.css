@@ -25,7 +25,9 @@
 .privacy p {margin-top:5px;color:#bfd0de;font-size:13px}
 .transcript {max-height:23dvh;overflow:auto;overflow-wrap:anywhere;white-space:pre-wrap}
 .transcript p + p {margin-top:8px}
-.transcript strong {display:block;color:#9ed9dc;font-size:12px}
+.transcript > p > strong,.answer > strong {display:block;color:#9ed9dc;font-size:12px}
+.answer {margin-top:8px;white-space:normal}
+.answer ul,.answer ol {padding-inline-start:20px;margin:6px 0}
 .controls {margin-top:18px;display:flex;gap:10px;justify-content:center}
 .controls button {min-height:44px;flex:1;border-radius:24px;background:#233952;border:1px solid #50647d;color:#fff;font-weight:600}
 .controls .start {background:#9ce9e0;color:#092624;border-color:transparent}
