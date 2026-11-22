@@ -1,5 +1,7 @@
 # DELTAFORCE Agent Studio
 
+**Builders · Build Ambitious submission** · [Try the live Telangana customer app](https://32.189.49.149:8443/chat/telangana_public_services_cb6baa3c7d45) · [Open Studio](https://32.189.49.149/multiAgentAccelerator?network=agent_network_designer) · [Judge walkthrough, evidence and reuse disclosure](deltasan/network-studio/SUBMISSION.md)
+
 Chat-driven command centre for designing, editing and running agent networks. Start with the [command centre guide](docs/command-centre.md) and [sample HOCON definition](data/networks/proposal-review.hocon).
 
 ## Run locally
