@@ -34,7 +34,7 @@ class BuilderTests(unittest.TestCase):
                 self.assertEqual(state["design_brief"], {"goal":goal,"audience":"Patients","region":"Andhra Pradesh"})
                 if end > 2:
                     self.assertIn("Office hours",reply)
-                    self.assertIn("hospital",reply)
+                    self.assertIn("ఆసుపత్రి" if "cheppu" in turns[end-1] else "hospital",reply)
         collect(state,"Use the public services directory")
         collect(state,"List outpatient departments and route exceptions to an officer")
         brief = state["design_brief"].copy()

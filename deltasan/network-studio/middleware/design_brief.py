@@ -14,7 +14,7 @@ GREETING = re.compile(r"(?:hi+|hello|hey|good (?:morning|afternoon|evening)|than
 
 
 def localize(reply, text):
-    if text.endswith("in Telugu for spoken playback.") or re.search(r"[ఀ-౿]", text):
+    if text.endswith("in Telugu for spoken playback.") or re.search(r"[ఀ-౿]|\b(?:cheppu|cheppandi|enti)\b", text, re.I):
         questions = ["ఈ నెట్‌వర్క్ ఏ సమస్యను పరిష్కరించాలి?", "దీన్ని ఎవరు ఉపయోగిస్తారు?",
                      "ఏ సమాచారం లేదా సాధనాలు ఉపయోగించవచ్చు?", "ఏ ఫలితం కావాలి? ఏ పనికి మనిషి అనుమతి అవసరం?"]
         labels = ["లక్ష్యం","వినియోగదారులు","సమాచారం","ఫలితం"]

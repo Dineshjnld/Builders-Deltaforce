@@ -39,6 +39,8 @@ def scenarios():
 
 
 def answer_help(topic, text, brief, catalog):
+    telugu = bool(re.search(r"[ఀ-౿]|\b(?:cheppu|cheppandi|enti)\b", text, re.I))
+    hindi = bool(re.search(r"[ऀ-ॿ]", text))
     if topic == "scenarios":
         region = next((s for s in ("Andhra Pradesh", "Telangana") if s.lower() in text.lower()), None)
         return "Here are public-service networks you can build:\n\n" + "\n".join(
@@ -50,13 +52,21 @@ def answer_help(topic, text, brief, catalog):
             f"- **{tool['label']}** — {tool['description']}" for tool in catalog.values())
         if re.search(r"hospital|outpatient|patient", brief.get("goal", ""), re.I) and "gov_services" in catalog:
             answer += "\n\nFor your hospital desk, the public services directory can point patients to official services. Live appointment slots and private records need an authorized hospital connector."
-        if re.search(r"cheppu|cheppandi|చెప్పు|చెప్పండి", text, re.I):
-            answer = "మీరు ఉపయోగించగల కనెక్టర్లు ఇవి.\n\n" + answer
+        if telugu or hindi:
+            title = "మీరు ఉపయోగించగల కనెక్టర్లు ఇవి." if telugu else "इस स्टूडियो में ये कनेक्टर उपलब्ध हैं।"
+            answer = title + "\n\n" + "\n".join("- **" + tool["label"] + "**" for tool in catalog.values())
+            if "gov_services" in catalog and re.search(r"hospital|outpatient|patient|ఆసుపత్రి|अस्पताल", brief.get("goal", ""), re.I):
+                answer += ("\n\nమీ ఆసుపత్రి కోసం పబ్లిక్ సర్వీసుల డైరెక్టరీని ఎంచుకోవచ్చు. అపాయింట్‌మెంట్లు లేదా రోగుల రికార్డులకు ఆసుపత్రి అనుమతించిన కనెక్టర్ అవసరం." if telugu else
+                           "\n\nअस्पताल की जानकारी के लिए सार्वजनिक सेवा निर्देशिका चुन सकते हैं। अपॉइंटमेंट और मरीज़ के रिकॉर्ड के लिए अस्पताल का अधिकृत कनेक्टर चाहिए।")
         return answer
     if topic == "controls":
         return ("**Customization** — Change the goal, audience, inputs or outcome in chat. You can revise roles and connections after building and set the organization name when publishing.\n\n"
                 "**Personal data** — New chat messages mask common email, Indian mobile, PAN, 12-digit ID and labelled patient ID formats. Names and free-text medical details can still pass through. Use synthetic examples in Studio.\n\n"
                 "**Guardrails** — The builder waits for confirmation. Chat only disables external tools. In Playground, an operator can require approval before every customer turn. The public service directory is read-only.\n\n"
                 "**Encryption and voice** — The public deployment uses HTTPS and an encrypted AWS disk for stored chat. The application can read session history for the conversation and authorized reviews. Cloud speech sends audio to OpenAI before text masking. Choose local speech in the voice panel or require local speech for new customer sessions in Playground.")
+    if telugu:
+        return "నెట్‌వర్క్ రూపకల్పనకు సమస్య, వినియోగదారులు, సమాచార వనరులు, ఆశించిన ఫలితం కావాలి. ఉదాహరణలు, కనెక్టర్లు లేదా గోప్యత గురించి అడగవచ్చు."
+    if hindi:
+        return "नेटवर्क बनाने के लिए समस्या, उपयोगकर्ता, सूचना स्रोत और अपेक्षित परिणाम बताइए। आप उदाहरणों, कनेक्टर या गोपनीयता के बारे में भी पूछ सकते हैं।"
     return ("I can explain integrations, privacy, approvals, or how to customize this network. "
             "For the brief, describe the service problem, people who will use it, information sources, or expected result.")
