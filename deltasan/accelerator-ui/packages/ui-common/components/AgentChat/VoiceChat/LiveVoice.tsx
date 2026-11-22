@@ -81,7 +81,7 @@ export function LiveVoice({network, busy, send, onDictation, realtime}: Props) {
         }
         try {
             const endpoint = realtime?.endpoint ?? "/api/voice/realtime"
-            const enabled = realtime ? realtime.enabled : await fetch(endpoint,{signal}).then(r=>r.ok?r.json():{}).then(j=>!!j.enabled).catch(()=>false)
+            const enabled = realtime ? realtime.enabled : await fetch(endpoint,{signal}).then(async r=>r.ok && (await r.json() as {enabled?:boolean}).enabled===true).catch(()=>false)
             if(enabled){
                 try{
                     await startRealtime({endpoint,enabled,token:realtime?.token},signal,{

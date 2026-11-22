@@ -1320,7 +1320,7 @@ export const ChatCommon = ({ref, ...props}: ChatCommonProps & {ref?: Ref<ChatCom
                 {handoff && <Typography variant="caption" role="status">Agent handoff · {handoff}</Typography>}
                 {activity.length>0 && <Box role="log" aria-label="Network build activity" sx={{borderLeft:"2px solid",borderColor:"primary.main",pl:1.5,my:1}}>
                     <Typography variant="overline">Network build activity</Typography>
-                    {activity.map((line,i)=><Typography key={i} display="block" variant="caption">{line}</Typography>)}
+                    {activity.map((line,i)=><Typography key={i} sx={{display:"block"}} variant="caption">{line}</Typography>)}
                 </Box>}
                 {getWorkingSpinner()}
                 {getControlButtons()}
