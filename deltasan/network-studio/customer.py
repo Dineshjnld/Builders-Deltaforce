@@ -226,6 +226,7 @@ def introduction(profile, message, language):
 async def run_turn(key, turn_id):
     with database() as db:
         row = db.execute("SELECT t.*,s.context FROM turns t JOIN sessions s ON s.id=t.session WHERE t.id=?", (turn_id,)).fetchone()
+        recent = db.execute("SELECT message,answer FROM turns WHERE session=? AND state='answered' ORDER BY created DESC LIMIT 2",(row["session"],)).fetchall()
     try:
         profile = deployment(key)
         intro = introduction(profile, row["message"], row["language"])
@@ -247,6 +248,15 @@ async def run_turn(key, turn_id):
             prompt += "\nVerified public-service directory result: "+json.dumps(source,ensure_ascii=False)+". Use this source; refer applications and decisions to the responsible office."
             with database() as db:
                 db.execute("INSERT OR REPLACE INTO turn_activity VALUES(?,?)",(turn_id,"Service directory → "+source["department"]))
+            # A directory lookup is complete once the requested official link has been found.
+            # Other tasks still go to the published network with the retrieved source.
+            if re.search(r"\b(where|link|website|portal|directory|url)\b",row["message"],re.I) and not re.search(r"\b(compare|draft|analyse|analyze|summarize|and explain)\b",row["message"],re.I) and row["language"] not in ("Telugu","Hindi"):
+                answer = f"{source['title']} is listed by {source['department']} in {source['state']}. Open the official service page for the current instructions.\n\n{source['url']}"
+                with database() as db:
+                    db.execute("UPDATE turns SET state='answered',answer=? WHERE id=?",(answer,turn_id))
+                return
+        if recent:
+            prompt += "\nRecent completed exchanges for continuity: "+json.dumps([{"customer":x["message"][:400],"assistant":x["answer"][:1000]} for x in reversed(recent)],ensure_ascii=False)
         payload = {"user_message":{"type":"HUMAN","text":prompt}, "chat_filter":{"chat_filter_type":"MAXIMAL"}}
         if row["context"]:
             payload["chat_context"] = json.loads(row["context"])
@@ -266,7 +276,7 @@ async def run_turn(key, turn_id):
                     if message.get("type") == "AGENT_FRAMEWORK":
                         answer = message.get("text") or answer
                         context = message.get("chat_context") or context
-        if not answer:
+        if not answer or answer.lstrip().lower().startswith(("agent timed out","error invoking agent")):
             raise ValueError("Missing final answer")
         if source and source["url"] not in answer:
             answer += "\n\n"+source["title"]+" · "+source["url"]
