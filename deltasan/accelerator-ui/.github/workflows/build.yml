@@ -1,0 +1,116 @@
+#    Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+#
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
+
+# ================================================================================
+# Build Workflow
+# ================================================================================
+# Purpose: Build Docker image and push to Amazon ECR
+#
+# Trigger Scenarios:
+# - Called by orchestrator workflow (automatic flow)
+# - Manual trigger: Allows building any arbitrary version/branch
+# ================================================================================
+
+# Note: this is mostly copy-pasta from the same Action in neuro-ui :thumbsdown:
+# See: https://leaf-ai.atlassian.net/browse/UN-3573
+
+name: Build
+
+on:
+    # Allow manual workflow dispatch
+    workflow_dispatch:
+        inputs:
+            revision:
+                description: "Git ref (tag/branch/SHA) to checkout"
+                required: false
+                type: string
+            DISPLAY_VERSION:
+                description: "Override display version for image tag"
+                required: false
+                type: string
+            is_release:
+                description: "Also build the no-auth image variant"
+                required: false
+                type: boolean
+                default: false
+    # Allow being called by other workflows
+    workflow_call:
+        inputs:
+            revision:
+                required: false
+                type: string
+            DISPLAY_VERSION:
+                required: true
+                type: string
+            is_release:
+                required: false
+                type: boolean
+                default: false
+        outputs:
+            image_tag:
+                description: "The image tag that was pushed to ECR"
+                value: ${{ jobs.build.outputs.image_tag }}
+
+env:
+    # AWS info needed to push the image to ECR
+    AWS_REGION: ${{ vars.AWS_REGION || 'us-west-2' }}
+    ECR_REGISTRY: ${{ vars.ECR_REGISTRY || '123456789012.dkr.ecr.us-east-1.amazonaws.com' }}
+    ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'neuro-san/neuro-san-ui' }}
+
+permissions:
+    id-token: write
+    contents: read
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        outputs:
+            image_tag: ${{ inputs.DISPLAY_VERSION }}
+        steps:
+            - name: Checkout repository
+              # v6.0.2
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+              with:
+                  fetch-depth: 0
+                  ref: ${{ inputs.revision || github.ref }}
+
+            - name: Setup Node.js and install dependencies
+              id: setup-node
+              # build-common 1.0.9
+              uses: cognizant-ai-lab/build-common/actions/setup-node-env@b14b3de23cb9aca02b2165e57542335e0c8f5304
+              with:
+                  clean-install: "true"
+
+            - name: Generate TypeScript API stubs
+              run: yarn generate
+
+            - name: Authenticate to AWS and login to ECR
+              # build-common 1.0.9
+              uses: cognizant-ai-lab/build-common/actions/aws-ecr-auth@b14b3de23cb9aca02b2165e57542335e0c8f5304
+              with:
+                  aws-account-id: ${{ vars.AWS_ACCOUNT_ID }}
+                  aws-role-name: ${{ vars.AWS_ROLE_NAME }}
+                  aws-region: ${{ env.AWS_REGION }}
+
+            - name: Build and push Docker image to ECR
+              # build-common 1.0.9
+              uses: cognizant-ai-lab/build-common/actions/docker-buildx-push@b14b3de23cb9aca02b2165e57542335e0c8f5304
+              with:
+                  context: .
+                  dockerfile: apps/main/Dockerfile
+                  tags: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ inputs.DISPLAY_VERSION }}
+                  build-args: |
+                      NODEJS_VERSION=${{ steps.setup-node.outputs.nodejs-major-version }}
+                      NEXT_PUBLIC_NEURO_SAN_UI_VERSION=${{ inputs.DISPLAY_VERSION }}
+                  quiet: "true"

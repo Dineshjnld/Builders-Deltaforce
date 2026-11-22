@@ -1,0 +1,45 @@
+/*
+Copyright 2026 Cognizant Technology Solutions Corp, www.cognizant.com.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+import {useEffect} from "react"
+
+import {fetchPublishState, PublishTarget} from "./Publish"
+import {usePublishServerUrl, usePublishStore} from "../../../state/Publish"
+import {useSettingsStore} from "../../../state/Settings"
+
+/**
+ * Where to publish the network, or null until there's a server and an org name. Also asks the server how the network
+ * is doing if this browser published it, since its publish state is only kept in memory.
+ */
+export const usePublishTarget = (networkId: string, networkName: string): PublishTarget | null => {
+    const serverUrl = usePublishServerUrl()
+    const orgName = useSettingsStore((state) => state.settings.publish.orgName)
+
+    useEffect(() => {
+        if (!serverUrl || !orgName || usePublishStore.getState().networks[networkId]) return
+
+        fetchPublishState(networkId, {serverUrl, orgName})
+            .then((publishState) => {
+                // Don't overwrite a publish the user started while we were asking
+                if (publishState && !usePublishStore.getState().networks[networkId]) {
+                    usePublishStore.getState().setPublishState(networkId, publishState)
+                }
+            })
+            .catch((e: unknown) => console.warn(`Unable to check whether "${networkName}" is published:`, e))
+    }, [networkId, networkName, orgName, serverUrl])
+
+    return serverUrl && orgName ? {serverUrl, orgName} : null
+}

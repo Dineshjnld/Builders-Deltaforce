@@ -1,0 +1,220 @@
+import {keyBy, mergeWith} from "lodash-es"
+
+import {
+    AGENT_NETWORK_DEFINITION_KEY,
+    AGENT_NETWORK_HOCON,
+    AGENT_RESERVATIONS_KEY,
+    AgentNetworkDefinitionEntry,
+    DisplayAs,
+    TEMPORARY_NETWORK_FOLDER,
+} from "./const"
+import {sendNetworkDesignerRequest} from "../../controller/agent/Agent"
+import {ChatMessage, ChatMessageType} from "../../generated/neuro-san/NeuroSanClient"
+import {TemporaryNetwork} from "../../state/TemporaryNetworks"
+import {removeTrailingUuid} from "../../utils/AgentName"
+import {chatMessageFromChunk} from "../AgentChat/Common/Utils"
+import {NotificationType, sendNotification} from "../Common/notification"
+
+//#region: Types
+
+/**
+ * Definition of a temporary network. No schema for this provided by backend so we second-guess it here.
+ * @see https://github.com/cognizant-ai-lab/neuro-san/issues/743
+ * @example
+ * ```json
+ * {
+ *   "reservation_id": "copy_cat-hello_world-14ecb260-4389-44f3-afad-ea315dfa1966",
+ *   "lifetime_in_seconds": 300.0,
+ *   "expiration_time_in_seconds": 1771438301.0245166
+ * }
+ * ```
+ */
+export type AgentReservation = {
+    readonly reservation_id: string
+    readonly lifetime_in_seconds: number
+    readonly expiration_time_in_seconds: number
+}
+
+//#endregion: Types
+
+/**
+ * Extracts agent reservations from a chat message, if they exist.
+ * @param message The chat message to extract reservations from. We expect reservations to be present in messages of
+ * type AGENT_FRAMEWORK only.
+ * @return An array of AgentReservation objects if reservations are found, or an empty array if not found or
+ * if the message is not of the expected type.
+ */
+export const extractReservations = (message: ChatMessage): AgentReservation[] => {
+    // Check for temp networks ("reservations") in sly_data
+    if (message?.type === ChatMessageType.AGENT_FRAMEWORK && message?.sly_data?.[AGENT_RESERVATIONS_KEY]) {
+        return message.sly_data[AGENT_RESERVATIONS_KEY] as AgentReservation[]
+    } else {
+        // Not the type of message that would contain reservations, or no reservations found, return empty array
+        return []
+    }
+}
+
+/**
+ * Extracts the agent network HOCON from a chat message, if it exists.
+ * @param message The chat message to extract network HOCON from.
+ * We expect the network definition to be present in messages of type AGENT_FRAMEWORK only.
+ * @return The network HOCON as a string, or null if not found or not the right type of message.
+ */
+export const extractNetworkHocon = (message: ChatMessage): string | null => {
+    // Check for agent network HOCON in sly_data
+    if (message?.type === ChatMessageType.AGENT_FRAMEWORK && message?.sly_data?.[AGENT_NETWORK_HOCON]) {
+        return message.sly_data[AGENT_NETWORK_HOCON] as string
+    } else {
+        // Not the type of message that would contain a network HOCON, or no network HOCON found, return null
+        return null
+    }
+}
+
+/**
+ * Converts a list of agent reservations received from the backend into TemporaryNetwork objects that can be
+ * displayed in the UI.
+ * @param agentReservations List of "agent reservations" (temporary networks) received from the backend
+ * @param networkHocon Optional network HOCON string associated with the reservations.
+ * @param agentNetworkDefinition Optional agent network definition entries.
+ * @param agentNetworkName Optional backend canonical network name used to match / deduplicate networks.
+ * @returns List of TemporaryNetwork objects ready for the store.
+ */
+export const convertReservationsToNetworks = (
+    agentReservations: AgentReservation[],
+    networkHocon: string | null,
+    agentNetworkDefinition?: AgentNetworkDefinitionEntry[],
+    agentNetworkName?: string
+): TemporaryNetwork[] => {
+    return (
+        agentReservations
+            // reservation_id is typed as required but is echoed from un-vetted backend data; skip entries
+            // missing it rather than build a "temporary/undefined" network.
+            .filter((reservation) => Boolean(reservation?.reservation_id))
+            .map((reservation) => ({
+                reservation,
+                agentInfo: {
+                    agent_name: `${TEMPORARY_NETWORK_FOLDER}/${reservation.reservation_id}`,
+                },
+                // Use the explicit name when provided; fall back to extracting it from the reservation_id so that
+                // networks are always deduplicated by name even when the backend omits AGENT_NETWORK_NAME_KEY.
+                agentNetworkName: agentNetworkName ?? removeTrailingUuid(reservation.reservation_id),
+                networkHocon,
+                agentNetworkDefinition,
+            }))
+    )
+}
+
+export const isEditableAgent = (displayAs: string | undefined): boolean => displayAs === DisplayAs.LLM_AGENT
+
+/**
+ * Extracts TemporaryNetwork objects from a chat message by reading reservations, HOCON,
+ * agent network definition, and agent network name from the message / sly_data.
+ * @param message The chat message to extract from.
+ * @param agentNetworkDefinitionOverride Optional definition override (e.g. a locally-edited version) that
+ *   takes precedence over whatever the backend echoes in sly_data.
+ * @returns A (possibly empty) array of TemporaryNetwork objects ready for the store.
+ */
+export const extractTemporaryNetworksFromMessage = (
+    message: ChatMessage,
+    agentNetworkDefinitionOverride?: AgentNetworkDefinitionEntry[]
+): TemporaryNetwork[] => {
+    const reservations = extractReservations(message)
+    if (reservations.length === 0) return []
+
+    const networkHocon = extractNetworkHocon(message)
+    const agentNetworkDefinition =
+        agentNetworkDefinitionOverride ??
+        (message.sly_data?.[AGENT_NETWORK_DEFINITION_KEY] as AgentNetworkDefinitionEntry[])
+
+    return convertReservationsToNetworks(reservations, networkHocon, agentNetworkDefinition)
+}
+
+/**
+ * Returns true when agentName refers to a known temporary network.
+ */
+export const isTemporaryNetwork = (agentName: string | null, networks: TemporaryNetwork[]): boolean =>
+    agentName !== null && networks.some((n) => n.agentInfo.agent_name === agentName)
+
+/**
+ * Merges incoming networks into target, keeping the entry with the highest expiration time.
+ * Returns a new array; does not mutate either argument.
+ */
+export const mergeNetworks = (target: TemporaryNetwork[], incoming: TemporaryNetwork[]): TemporaryNetwork[] =>
+    Object.values(
+        mergeWith(
+            keyBy(target, "agentNetworkName"),
+            keyBy(incoming, "agentNetworkName"),
+            // Both collections share a name: keep whichever reservation expires later, existing wins ties.
+            (existing: TemporaryNetwork | undefined, candidate: TemporaryNetwork) =>
+                existing &&
+                existing.reservation.expiration_time_in_seconds >= candidate.reservation.expiration_time_in_seconds
+                    ? existing
+                    : candidate
+        )
+    )
+
+/**
+ * Extracts TemporaryNetworks from a single streamed chunk, merging into `accumulated`.
+ * Returns `accumulated` unchanged if the chunk yields no reservations or on parse error.
+ */
+const collectNetworkFromChunk = (
+    chunk: string,
+    updated: AgentNetworkDefinitionEntry[],
+    accumulated: TemporaryNetwork[]
+): TemporaryNetwork[] => {
+    try {
+        const chatMessage = chatMessageFromChunk(chunk)
+        if (!chatMessage) return accumulated
+
+        // Always use the user's edited definition as the authoritative value.
+        const converted = extractTemporaryNetworksFromMessage(chatMessage, updated)
+        if (converted.length === 0) return accumulated
+        return mergeNetworks(accumulated, converted)
+    } catch (e: unknown) {
+        console.warn("Failed to process chunk from network designer:", e)
+        return accumulated
+    }
+}
+
+/** Logs and notifies about a save error. Suppresses AbortError (user-canceled). */
+export const notifySaveError = (agentName: string, e: unknown): void => {
+    if (e instanceof DOMException && e.name === "AbortError") return
+    console.error("Failed to submit agent network update:", e)
+    const detail =
+        e instanceof DOMException && e.name === "TimeoutError"
+            ? "The request timed out waiting for the server. Please try again."
+            : String(e)
+    sendNotification(NotificationType.error, `Failed to update network "${agentName}".`, detail)
+}
+
+/**
+ * Streams a network definition through the network designer to obtain its reservation.
+ * Returns the single updated network as a one-element list (empty if the designer returned
+ * no reservation).
+ */
+export const streamNetworkDesignerUpsert = async (
+    neuroSanURL: string,
+    signal: AbortSignal,
+    frontman: string,
+    networkDef: AgentNetworkDefinitionEntry[],
+    agentNetworkName: string | undefined,
+    username: string,
+    extraSlyData: Record<string, unknown> = {}
+): Promise<TemporaryNetwork[]> => {
+    let newNetworks: TemporaryNetwork[] = []
+    await sendNetworkDesignerRequest(
+        neuroSanURL,
+        signal,
+        frontman,
+        networkDef,
+        agentNetworkName,
+        username,
+        (chunk) => {
+            // There is only one network. The designer echoes it across streamed chunks. Merge by name so the
+            // repeated echoes collapse into that single entry rather than appending duplicates.
+            newNetworks = collectNetworkFromChunk(chunk, networkDef, newNetworks)
+        },
+        extraSlyData
+    )
+    return newNetworks
+}

@@ -1,0 +1,411 @@
+/*
+Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+import {withStrictMocks} from "../../../../../__tests__/common/strictMocks"
+import {NotificationType, sendNotification} from "../../../components/Common/notification"
+import {
+    AGENT_NETWORK_DEFINITION_KEY,
+    AGENT_RESERVATIONS_KEY,
+    TEMPORARY_NETWORK_FOLDER,
+} from "../../../components/MultiAgentAccelerator/const"
+import {
+    AgentReservation,
+    convertReservationsToNetworks,
+    extractTemporaryNetworksFromMessage,
+    isEditableAgent,
+    isTemporaryNetwork,
+    mergeNetworks,
+    notifySaveError,
+    streamNetworkDesignerUpsert,
+} from "../../../components/MultiAgentAccelerator/TemporaryNetworks"
+import {sendNetworkDesignerRequest} from "../../../controller/agent/Agent"
+import {ChatMessage, ChatMessageType} from "../../../generated/neuro-san/NeuroSanClient"
+
+vi.mock("../../../controller/agent/Agent", () => ({sendNetworkDesignerRequest: vi.fn()}))
+
+vi.mock("../../../components/Common/notification", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../../components/Common/notification")>()),
+    sendNotification: vi.fn(),
+}))
+
+const makeReservation = (id: string): AgentReservation => ({
+    reservation_id: id,
+    lifetime_in_seconds: 300,
+    expiration_time_in_seconds: Date.now() / 1000 + 300,
+})
+
+describe("convertReservationsToNetworks", () => {
+    withStrictMocks()
+
+    it("maps a single reservation to a TemporaryNetwork", () => {
+        const res = makeReservation("abc-123")
+        const [network] = convertReservationsToNetworks([res], null)
+
+        expect(network.reservation).toBe(res)
+        expect(network.agentInfo.agent_name).toBe(`${TEMPORARY_NETWORK_FOLDER}/abc-123`)
+        expect(network.networkHocon).toBeNull()
+        // No UUID suffix in "abc-123" → falls back to the raw reservation_id as the name.
+        expect(network.agentNetworkName).toBe("abc-123")
+        expect(network.agentNetworkDefinition).toBeUndefined()
+    })
+
+    it("derives agentNetworkName from reservation_id", () => {
+        const res = makeReservation("res-xyz")
+        const [network] = convertReservationsToNetworks([res], null)
+
+        expect(network.agentNetworkName).toBe("res-xyz")
+    })
+
+    it("propagates the networkHocon to all resulting networks", () => {
+        const reservations = [makeReservation("r1"), makeReservation("r2")]
+        const hocon = 'include required(classpath("base.conf"))'
+
+        const networks = convertReservationsToNetworks(reservations, hocon)
+
+        expect(networks).toHaveLength(2)
+        networks.forEach((n) => expect(n.networkHocon).toBe(hocon))
+    })
+
+    it("handles multiple reservations in one call", () => {
+        const reservations = [makeReservation("r1"), makeReservation("r2"), makeReservation("r3")]
+
+        const networks = convertReservationsToNetworks(reservations, null)
+
+        expect(networks).toHaveLength(3)
+        expect(networks.map((n) => n.agentInfo.agent_name)).toEqual(["temporary/r1", "temporary/r2", "temporary/r3"])
+    })
+
+    it("returns an empty array for an empty input", () => {
+        expect(convertReservationsToNetworks([], null)).toEqual([])
+    })
+
+    it("drops un-vetted reservations that lack a usable reservation_id", () => {
+        const validId = "good-1"
+        const valid = makeReservation(validId)
+        // reservation_id is typed as a string, but it is echoed from un-vetted backend data and may be
+        // missing or empty at runtime; such entries must not produce a "temporary/undefined" network.
+        const missingId: AgentReservation = {...makeReservation("ignored"), reservation_id: undefined}
+        const emptyId = makeReservation("")
+
+        const networks = convertReservationsToNetworks([missingId, valid, emptyId], null)
+
+        expect(networks).toHaveLength(1)
+        expect(networks[0].agentInfo.agent_name).toBe(`${TEMPORARY_NETWORK_FOLDER}/${validId}`)
+    })
+
+    it("forwards the agentNetworkDefinition to each network", () => {
+        const res = makeReservation("r1")
+        const definition = [{origin: "agent1", tools: [] as string[]}]
+
+        const [network] = convertReservationsToNetworks([res], null, definition)
+
+        expect(network.agentNetworkDefinition).toBe(definition)
+    })
+
+    it("derives agentNetworkName from reservation_id when no explicit name is given", () => {
+        const res = makeReservation("travel_agency_ops-7876642e-fe75-4d44-a61e-300688a1a6c5")
+        const [network] = convertReservationsToNetworks([res], null)
+
+        expect(network.agentNetworkName).toBe("travel_agency_ops")
+    })
+})
+
+describe("isTemporaryNetwork", () => {
+    withStrictMocks()
+
+    const makeNetwork = (agentName: string) => ({
+        reservation: makeReservation("res-1"),
+        agentInfo: {agent_name: agentName},
+        agentNetworkName: agentName,
+    })
+
+    it("returns false when agentName is null", () => {
+        expect(isTemporaryNetwork(null, [makeNetwork("temporary/abc")])).toBe(false)
+    })
+
+    it("returns false when the networks array is empty", () => {
+        expect(isTemporaryNetwork("temporary/abc", [])).toBe(false)
+    })
+
+    it("returns false when no network matches the agentName", () => {
+        expect(isTemporaryNetwork("temporary/other", [makeNetwork("temporary/abc")])).toBe(false)
+    })
+
+    it("returns true when a network matches the agentName", () => {
+        expect(isTemporaryNetwork("temporary/abc", [makeNetwork("temporary/abc")])).toBe(true)
+    })
+
+    it("matches case-sensitively — names differing only in case do not match", () => {
+        // agent_name is an exact identifier derived from reservation_id, so casing is significant.
+        expect(isTemporaryNetwork("temporary/Abc", [makeNetwork("temporary/abc")])).toBe(false)
+    })
+})
+
+describe("isEditableAgent", () => {
+    withStrictMocks()
+
+    it("returns true for llm_agent", () => {
+        expect(isEditableAgent("llm_agent")).toBe(true)
+    })
+
+    it("returns false for coded_tool", () => {
+        expect(isEditableAgent("coded_tool")).toBe(false)
+    })
+
+    it("returns false for langchain_tool", () => {
+        expect(isEditableAgent("langchain_tool")).toBe(false)
+    })
+
+    it("returns false for external_agent", () => {
+        expect(isEditableAgent("external_agent")).toBe(false)
+    })
+
+    it("returns false when displayAs is undefined", () => {
+        expect(isEditableAgent(undefined)).toBe(false)
+    })
+})
+
+describe("extractTemporaryNetworksFromMessage", () => {
+    withStrictMocks()
+
+    const makeReservationObj = (id: string): AgentReservation => ({
+        reservation_id: id,
+        lifetime_in_seconds: 300,
+        expiration_time_in_seconds: Date.now() / 1000 + 300,
+    })
+
+    const makeFrameworkMessage = (slyData: Record<string, unknown>): ChatMessage => ({
+        type: ChatMessageType.AGENT_FRAMEWORK,
+        sly_data: slyData,
+    })
+
+    it("returns an empty array when the message has no reservations", () => {
+        const message: ChatMessage = {type: ChatMessageType.AGENT_FRAMEWORK, sly_data: {}}
+        expect(extractTemporaryNetworksFromMessage(message)).toEqual([])
+    })
+
+    it("returns an empty array for a non-AGENT_FRAMEWORK message", () => {
+        const message: ChatMessage = {
+            type: ChatMessageType.AI,
+            sly_data: {[AGENT_RESERVATIONS_KEY]: [makeReservationObj("res-1")]},
+        }
+        expect(extractTemporaryNetworksFromMessage(message)).toEqual([])
+    })
+
+    it("converts reservations from sly_data into TemporaryNetwork objects", () => {
+        const reservation = makeReservationObj("my_net-7876642e-fe75-4d44-a61e-300688a1a6c5")
+        const message = makeFrameworkMessage({[AGENT_RESERVATIONS_KEY]: [reservation]})
+
+        const result = extractTemporaryNetworksFromMessage(message)
+
+        expect(result).toHaveLength(1)
+        expect(result[0].agentInfo.agent_name).toBe(`${TEMPORARY_NETWORK_FOLDER}/${reservation.reservation_id}`)
+        expect(result[0].reservation).toBe(reservation)
+    })
+
+    it("ignores agent_network_name in sly_data — agentNetworkName is always derived from reservation_id", () => {
+        const reservation = makeReservationObj("res-abc")
+        const message = makeFrameworkMessage({
+            [AGENT_RESERVATIONS_KEY]: [reservation],
+        })
+
+        const [network] = extractTemporaryNetworksFromMessage(message)
+        expect(network.agentNetworkName).toBe("res-abc")
+    })
+
+    it("reads agentNetworkDefinition from sly_data when no override is given", () => {
+        const reservation = makeReservationObj("res-abc")
+        const definition = [{origin: "agent1", tools: [] as string[]}]
+        const message = makeFrameworkMessage({
+            [AGENT_RESERVATIONS_KEY]: [reservation],
+            [AGENT_NETWORK_DEFINITION_KEY]: definition,
+        })
+
+        const [network] = extractTemporaryNetworksFromMessage(message)
+        expect(network.agentNetworkDefinition).toEqual(definition)
+    })
+
+    it("prefers agentNetworkDefinitionOverride over the sly_data value", () => {
+        const reservation = makeReservationObj("res-abc")
+        const slyDefinition = [{origin: "from_sly", tools: [] as string[]}]
+        const overrideDefinition = [{origin: "from_override", tools: [] as string[]}]
+        const message = makeFrameworkMessage({
+            [AGENT_RESERVATIONS_KEY]: [reservation],
+            [AGENT_NETWORK_DEFINITION_KEY]: slyDefinition,
+        })
+
+        const [network] = extractTemporaryNetworksFromMessage(message, overrideDefinition)
+        expect(network.agentNetworkDefinition).toBe(overrideDefinition)
+    })
+})
+
+describe("mergeNetworks", () => {
+    withStrictMocks()
+
+    const makeNetwork = (reservationId: string, expiryOffset: number, agentNetworkName: string) => ({
+        reservation: {
+            reservation_id: reservationId,
+            lifetime_in_seconds: 300,
+            expiration_time_in_seconds: Date.now() / 1000 + expiryOffset,
+        },
+        agentInfo: {agent_name: `temporary/${reservationId}`},
+        agentNetworkName,
+    })
+
+    it("returns a new array with the incoming network when target is empty", () => {
+        const incoming = makeNetwork("new-res", 86400, "my_network")
+        const result = mergeNetworks([], [incoming])
+
+        expect(result).toHaveLength(1)
+        expect(result[0]).toBe(incoming)
+    })
+
+    it("appends a network when no matching key exists in target", () => {
+        const existing = makeNetwork("old-res", 300, "network_a")
+        const incoming = makeNetwork("new-res", 86400, "network_b")
+
+        const result = mergeNetworks([existing], [incoming])
+
+        expect(result).toHaveLength(2)
+    })
+
+    it("keeps the incoming network when it has a higher expiry than the existing one (old echo then new)", () => {
+        // Simulates the streaming pattern: backend echoes old reservation first, then sends new one.
+        const oldRes = makeNetwork("old-res", 100, "my_network") // lower expiry
+        const newRes = makeNetwork("new-res", 86400, "my_network") // higher expiry → should win
+
+        // First merge: old echo arrives
+        const afterOld = mergeNetworks([], [oldRes])
+        // Second merge: new reservation arrives
+        const result = mergeNetworks(afterOld, [newRes])
+
+        expect(result).toHaveLength(1)
+        expect(result[0]).toBe(newRes)
+    })
+
+    it("keeps the existing network when it has a higher expiry than the incoming one (new then old)", () => {
+        // Simulates reversed streaming order: new reservation arrives first, then old echo.
+        const newRes = makeNetwork("new-res", 86400, "my_network") // higher expiry → should win
+        const oldRes = makeNetwork("old-res", 100, "my_network") // lower expiry → should lose
+
+        // First merge: new reservation arrives
+        const afterNew = mergeNetworks([], [newRes])
+        // Second merge: old echo arrives — must NOT overwrite the newer entry
+        const result = mergeNetworks(afterNew, [oldRes])
+
+        expect(result).toHaveLength(1)
+        expect(result[0]).toBe(newRes)
+    })
+
+    it("does not mutate the original target array", () => {
+        const existing = makeNetwork("res-1", 300, "net_a")
+        const target = [existing]
+        const incoming = makeNetwork("res-2", 300, "net_b")
+
+        mergeNetworks(target, [incoming])
+
+        expect(target).toHaveLength(1)
+    })
+})
+
+describe("notifySaveError", () => {
+    withStrictMocks()
+
+    it("ignores AbortError", () => {
+        notifySaveError("net", new DOMException("aborted", "AbortError"))
+
+        expect(sendNotification).not.toHaveBeenCalled()
+    })
+
+    it("shows a timeout-specific message for TimeoutError", () => {
+        const errorSpy = vi.spyOn(console, "error").mockImplementation(vi.fn())
+
+        notifySaveError("net", new DOMException("timeout", "TimeoutError"))
+
+        expect(errorSpy).toHaveBeenCalled()
+        expect(sendNotification).toHaveBeenCalledWith(
+            NotificationType.error,
+            'Failed to update network "net".',
+            expect.stringContaining("timed out")
+        )
+    })
+
+    it("stringifies other errors", () => {
+        const errorSpy = vi.spyOn(console, "error").mockImplementation(vi.fn())
+
+        notifySaveError("net", new Error("boom"))
+
+        expect(errorSpy).toHaveBeenCalled()
+        expect(sendNotification).toHaveBeenCalledWith(
+            NotificationType.error,
+            'Failed to update network "net".',
+            "Error: boom"
+        )
+    })
+})
+
+describe("streamNetworkDesignerUpsert", () => {
+    withStrictMocks()
+
+    const reservationChunk = (reservationId: string) =>
+        JSON.stringify({
+            response: {
+                type: ChatMessageType.AGENT_FRAMEWORK,
+                sly_data: {[AGENT_RESERVATIONS_KEY]: [makeReservation(reservationId)]},
+            },
+        })
+
+    // Feeds the given chunks to the streaming callback, as the real request would
+    const streamChunks = async (chunks: string[]) => {
+        vi.mocked(sendNetworkDesignerRequest).mockImplementation(async (...args) => {
+            const onChunk = args[6]
+            chunks.forEach((chunk) => onChunk(chunk))
+        })
+        return streamNetworkDesignerUpsert("http://x", new AbortController().signal, "front", [], "net", "user")
+    }
+
+    it("collapses repeated echoes of the same reservation into one network", async () => {
+        const networks = await streamChunks([reservationChunk("abc"), reservationChunk("abc")])
+
+        expect(networks).toHaveLength(1)
+    })
+
+    it("ignores chunks that are not chat messages or carry no reservations", async () => {
+        const noReservations = JSON.stringify({
+            response: {type: ChatMessageType.AGENT_FRAMEWORK, sly_data: {}},
+        })
+
+        // A reservation without an id is dropped during conversion, leaving nothing to merge
+        const noReservationId = JSON.stringify({
+            response: {type: ChatMessageType.AGENT_FRAMEWORK, sly_data: {[AGENT_RESERVATIONS_KEY]: [{}]}},
+        })
+
+        expect(await streamChunks(["not json", noReservations, noReservationId])).toEqual([])
+    })
+
+    it("keeps what it has and warns when a chunk cannot be processed", async () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(vi.fn())
+        // Reservations is not an array, so conversion throws
+        const badChunk = JSON.stringify({
+            response: {type: ChatMessageType.AGENT_FRAMEWORK, sly_data: {[AGENT_RESERVATIONS_KEY]: 5}},
+        })
+
+        const networks = await streamChunks([reservationChunk("abc"), badChunk])
+
+        expect(networks).toHaveLength(1)
+        expect(warnSpy).toHaveBeenCalledWith("Failed to process chunk from network designer:", expect.anything())
+    })
+})

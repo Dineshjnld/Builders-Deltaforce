@@ -1,0 +1,130 @@
+import Typography from "@mui/material/Typography"
+import {Step} from "react-joyride"
+
+import {NeuroSanStudioCallout} from "../NeuroSanStudioCallout"
+
+/**
+ * This file defines the steps for the main tour of the DeltaSAN application.
+ *
+ * @see https://react-joyride.com/docs/step
+ */
+export const MAIN_TOUR_STEPS: Step[] = [
+    {
+        // First step doesn't refer to any particular UI element, just a welcome message
+        content:
+            "Welcome to DeltaSAN! This tour will give you a quick overview of " +
+            "the application.",
+        target: () => document.querySelector("#multi-agent-accelerator-center-panel"),
+        placement: "center",
+    },
+    {
+        content:
+            "This is the list of agent networks available on the server. Select a network to see its agents and " +
+            "start interacting with it!",
+        target: () => document.querySelector(".MuiRichTreeView-root"),
+        placement: "bottom",
+    },
+    {
+        content: (
+            <>
+                Agent Network Designer: Click here to create and edit your own network, with the help of a powerful AI
+                assistant.
+                <br />
+                <br />
+                Networks you create can be downloaded from the sidebar as a HOCON file and run in neuro-san or
+                neuro-san-studio. See the User Guide (under Help) for more information.
+            </>
+        ),
+        target: () => document.querySelector("#add-network-icon"),
+        placement: "bottom",
+    },
+    {
+        content:
+            "This indicator shows the online status of the Neuro SAN backend service. " +
+            "Mouse over it to see the current server URL, status, version, and any error details.",
+        target: () => document.querySelector("#multi-agent-accelerator-sidebar-agent-network-status-light"),
+        placement: "bottom",
+    },
+    {
+        content:
+            "These are the agents within the current network. The arrows show the flow of information between " +
+            "them and the tools used by each agent. For networks you have created, you can click on an agent " +
+            "to edit it",
+        target: () => document.querySelector("#multi-agent-accelerator-center-panel"),
+        placement: "auto",
+    },
+    {
+        content:
+            "These buttons allow you to adjust the look of the agent flow to your liking. " +
+            "Mouse over them to see what they do!",
+        // get by aria-label "Control Panel"
+        target: () => document.querySelector('div[aria-label="Control Panel"]'),
+    },
+    {
+        content:
+            "This is the legend for the agent flow. You can select either 'depth' or 'heatmap' view " +
+            "to see the corresponding information about the agents in the flow.",
+        target: () => document.querySelector("#multi-agent-accelerator-agent-flow-legend"),
+    },
+    {
+        content: "This is the chat window where you can interact with the currently selected network.",
+        target: () => document.querySelector("#llm-chat-agent-network-ui"),
+        placement: "auto",
+    },
+    {
+        content:
+            "These are the sample queries for your currently selected network. Click one to send it to the agents!",
+        target: () => document.querySelector("#sample-queries-box"),
+        placement: "top",
+    },
+    {
+        content: "Try typing your query here and sending it to the agents by hitting <Enter>!",
+        target: () => document.querySelector("#user-input-div"),
+        placement: "top",
+    },
+    {
+        content:
+            "Click this button to display a menu that allows you to choose how content is displayed in the chat " +
+            "window. Here you can also enter any sly_data items required by the network (advanced).",
+        target: () => document.querySelector("#agent-network-ui-options-menu-button-container"),
+        placement: "bottom",
+    },
+    {
+        content:
+            "This button allows you to download the chat with this agent, including history, as a plain text file.",
+        target: () => document.querySelector("#save-chat-button"),
+        placement: "bottom",
+    },
+    {
+        content:
+            "Access Settings from this icon. Here you can change the look and feel of the application, including " +
+            "auto branding for a particular customer, enter API keys for providers like OpenAI and Anthropic, and " +
+            "configure the URL used to access Neuro SAN services!",
+        target: () => document.querySelector("#settings-icon"),
+        placement: "top",
+    },
+    {
+        content:
+            "Select the items in this menu to learn more about Neuro-san, our open-source framework for building " +
+            "and running multi-agent systems, including access our GitHub repository with code samples " +
+            "and documentation.",
+        target: () => document.querySelector("#explore-dropdown"),
+        placement: "top",
+    },
+    {
+        content: (
+            <>
+                <Typography
+                    sx={{mb: 1}}
+                    variant="body2"
+                >
+                    Need help, want to retake the tour, or have feedback? Use this menu to find help resources and
+                    contact the Cognizant AI Labs team.
+                </Typography>
+                <NeuroSanStudioCallout />
+            </>
+        ),
+        target: () => document.querySelector("#help-dropdown"),
+        placement: "top",
+    },
+]

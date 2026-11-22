@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+
+#  Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+#  
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#  
+#      http://www.apache.org/licenses/LICENSE-2.0
+#  
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+
+
+
+#
+# This script determines the version, deployment environment, and deployment flags
+# based on the GitHub event type and ref.
+#
+# Usage: determine_version.sh <event_name> <ref> [tag_name] [sha]
+#
+# Arguments:
+#   event_name: The GitHub event name (e.g., "release", "push", "pull_request")
+#   ref: The GitHub ref (e.g., "refs/heads/main", "refs/heads/feature-branch", "refs/pull/123/merge")
+#   tag_name: (Optional) The release tag name (required if event_name is "release")
+#   sha: (Optional) The Git SHA (required for non-release events)
+#
+# Output: Sets GitHub Actions output variables:
+#   - version: The version string to use
+#   - deploy_env: The deployment environment (dev, staging, prod)
+#   - should_build: Whether to build (true/false)
+#   - should_deploy: Whether to deploy (true/false)
+#
+
+# See https://www.gnu.org/software/bash/manual/html_node/The-Set-Builtin.html for what these do
+set -o errtrace
+set -o nounset
+set -o pipefail
+
+# Parse arguments
+EVENT_NAME="${1:-}"
+REF="${2:-}"
+TAG_NAME="${3:-}"
+SHA="${4:-}"
+
+# Validate required arguments
+if [[ -z "$EVENT_NAME" || -z "$REF" ]]; then
+    echo "Error: event_name and ref are required arguments" >&2
+    echo "Usage: $0 <event_name> <ref> [tag_name] [sha]" >&2
+    exit 1
+fi
+
+# Determine version and deployment settings based on event type
+if [[ "$EVENT_NAME" == "release" ]]; then
+    # GitHub release: Deploy to staging with the release tag
+    if [[ -z "$TAG_NAME" ]]; then
+        echo "Error: tag_name is required for release events" >&2
+        exit 1
+    fi
+    
+    # Strip leading "v" prefix (e.g. "v1.3.4" → "1.3.4") so
+    # package.json and ECR tags get a clean semver string.
+    VERSION="${TAG_NAME#v}"
+    DEPLOY_ENV="staging"
+    SHOULD_BUILD="true"
+    SHOULD_DEPLOY="true"
+    
+elif [[ "$EVENT_NAME" == "push" && "$REF" == "refs/heads/main" ]]; then
+    # Push to main: Deploy to dev with short SHA
+    if [[ -z "$SHA" ]]; then
+        echo "Error: sha is required for non-release events" >&2
+        exit 1
+    fi
+    
+    VERSION="${SHA:0:7}"
+    DEPLOY_ENV="dev"
+    SHOULD_BUILD="true"
+    SHOULD_DEPLOY="true"
+    
+elif [[ "$EVENT_NAME" == "pull_request" ]]; then
+    # Pull request to main: Only test, no build or deploy
+    if [[ -z "$SHA" ]]; then
+        echo "Error: sha is required for non-release events" >&2
+        exit 1
+    fi
+    
+    VERSION="${SHA:0:7}"
+    DEPLOY_ENV="dev"
+    SHOULD_BUILD="false"
+    SHOULD_DEPLOY="false"
+    
+else
+    # Any other branch/ref event: Only test, no build or deploy
+    if [[ -z "$SHA" ]]; then
+        echo "Error: sha is required for non-release events" >&2
+        exit 1
+    fi
+    
+    VERSION="${SHA:0:7}"
+    DEPLOY_ENV="dev"
+    SHOULD_BUILD="false"
+    SHOULD_DEPLOY="false"
+fi
+
+# Output results for GitHub Actions
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    {
+        echo "version=$VERSION"
+        echo "deploy_env=$DEPLOY_ENV"
+        echo "should_build=$SHOULD_BUILD"
+        echo "should_deploy=$SHOULD_DEPLOY"
+    } >> "$GITHUB_OUTPUT"
+fi
+
+# Also print to stdout for debugging
+echo "Version: $VERSION"
+echo "Deploy Environment: $DEPLOY_ENV"
+echo "Should Build: $SHOULD_BUILD"
+echo "Should Deploy: $SHOULD_DEPLOY"

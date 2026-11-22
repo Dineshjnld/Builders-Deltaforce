@@ -1,0 +1,179 @@
+/*
+Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+import {withStrictMocks} from "../../../../../__tests__/common/strictMocks"
+import {PublishedDeployment, TemporaryNetwork, useTempNetworksStore} from "../../../state/TemporaryNetworks"
+
+const PUBLISHED_DEPLOYMENT: PublishedDeployment = {
+    serverUrl: "https://publish.test",
+    orgName: "cailville",
+    deploymentId: "dep-1",
+    name: "network_alpha_1a2b3c4d",
+}
+
+const makeNetwork = (reservationId: string, agentNetworkName?: string): TemporaryNetwork => ({
+    reservation: {
+        reservation_id: reservationId,
+        lifetime_in_seconds: 300,
+        expiration_time_in_seconds: Date.now() / 1000 + 300,
+    },
+    agentInfo: {
+        agent_name: `temporary/${reservationId}`,
+    },
+    agentNetworkName,
+    networkHocon: null,
+    agentNetworkDefinition: [],
+})
+
+describe("useTempNetworksStore / upsertTempNetworks", () => {
+    withStrictMocks()
+
+    beforeEach(() => {
+        useTempNetworksStore.getState().setTempNetworks([])
+    })
+
+    it("appends new networks when no existing network shares the same agentNetworkName", () => {
+        const net1 = makeNetwork("res-1", "network_alpha")
+        const net2 = makeNetwork("res-2", "network_beta")
+
+        useTempNetworksStore.getState().upsertTempNetworks([net1])
+        useTempNetworksStore.getState().upsertTempNetworks([net2])
+
+        const stored = useTempNetworksStore.getState().tempNetworks
+        expect(stored).toHaveLength(2)
+        expect(stored[0].agentInfo.agent_name).toBe("temporary/res-1")
+        expect(stored[1].agentInfo.agent_name).toBe("temporary/res-2")
+    })
+
+    it("replaces an existing network when a new one has the same agentNetworkName", () => {
+        const original = makeNetwork("network_alpha-11111111-1111-1111-1111-111111111111", "network_alpha")
+        useTempNetworksStore.getState().upsertTempNetworks([original])
+
+        const replacement = makeNetwork("network_alpha-22222222-2222-2222-2222-222222222222", "network_alpha")
+        useTempNetworksStore.getState().upsertTempNetworks([replacement])
+
+        const stored = useTempNetworksStore.getState().tempNetworks
+        // Should still have only one network
+        expect(stored).toHaveLength(1)
+        // Should be the replacement, not the original
+        expect(stored[0].agentInfo.agent_name).toBe("temporary/network_alpha-22222222-2222-2222-2222-222222222222")
+    })
+
+    it("replaces the correct network among multiple networks", () => {
+        const netAlpha = makeNetwork("network_alpha-aaaa0001-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "network_alpha")
+        const netBeta = makeNetwork("network_beta-bbbb0001-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "network_beta")
+        useTempNetworksStore.getState().upsertTempNetworks([netAlpha, netBeta])
+
+        const replacementBeta = makeNetwork("network_beta-bbbb0002-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "network_beta")
+        useTempNetworksStore.getState().upsertTempNetworks([replacementBeta])
+
+        const stored = useTempNetworksStore.getState().tempNetworks
+        expect(stored).toHaveLength(2)
+        // Alpha should be unchanged
+        expect(stored.find((n) => n.agentNetworkName === "network_alpha")?.agentInfo.agent_name).toBe(
+            "temporary/network_alpha-aaaa0001-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        )
+        // Beta should be replaced
+        expect(stored.find((n) => n.agentNetworkName === "network_beta")?.agentInfo.agent_name).toBe(
+            "temporary/network_beta-bbbb0002-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+        )
+    })
+
+    it("returns the list of upserted networks", () => {
+        const net1 = makeNetwork("res-1", "network_alpha")
+        const net2 = makeNetwork("res-2", "network_beta")
+
+        const upserted = useTempNetworksStore.getState().upsertTempNetworks([net1, net2])
+
+        expect(upserted).toHaveLength(2)
+        expect(upserted[0].agentInfo.agent_name).toBe("temporary/res-1")
+        expect(upserted[1].agentInfo.agent_name).toBe("temporary/res-2")
+    })
+
+    it("handles an empty input array without changing the store", () => {
+        const existing = makeNetwork("res-1", "network_alpha")
+        useTempNetworksStore.getState().upsertTempNetworks([existing])
+
+        useTempNetworksStore.getState().upsertTempNetworks([])
+
+        const stored = useTempNetworksStore.getState().tempNetworks
+        expect(stored).toHaveLength(1)
+    })
+
+    it("upserts multiple networks in a single call, including mixed replacements and additions", () => {
+        const existing = makeNetwork("shared_name-aaaa0001-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "shared_name")
+        useTempNetworksStore.getState().upsertTempNetworks([existing])
+
+        const replacement = makeNetwork("shared_name-aaaa0002-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "shared_name")
+        const brandNew = makeNetwork("brand_new_name-bbbb0001-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "brand_new_name")
+        useTempNetworksStore.getState().upsertTempNetworks([replacement, brandNew])
+
+        const stored = useTempNetworksStore.getState().tempNetworks
+        expect(stored).toHaveLength(2)
+        expect(stored.find((n) => n.agentNetworkName === "shared_name")?.agentInfo.agent_name).toBe(
+            "temporary/shared_name-aaaa0002-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        )
+        expect(stored.find((n) => n.agentNetworkName === "brand_new_name")?.agentInfo.agent_name).toBe(
+            "temporary/brand_new_name-bbbb0001-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+        )
+    })
+
+    it("keeps where a network was published when an edit replaces it", () => {
+        useTempNetworksStore.getState().upsertTempNetworks([makeNetwork("network_alpha-1", "network_alpha")])
+        useTempNetworksStore
+            .getState()
+            .updateTempNetwork("temporary/network_alpha-1", {deployment: PUBLISHED_DEPLOYMENT})
+
+        useTempNetworksStore.getState().upsertTempNetworks([makeNetwork("network_alpha-2", "network_alpha")])
+
+        const [stored] = useTempNetworksStore.getState().tempNetworks
+        expect(stored.agentInfo.agent_name).toBe("temporary/network_alpha-2")
+        expect(stored.deployment).toEqual(PUBLISHED_DEPLOYMENT)
+    })
+
+    it("updates the definition of only the named network", () => {
+        const first = makeNetwork("first-aaaa0001-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "first")
+        const second = makeNetwork("second-bbbb0001-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "second")
+        useTempNetworksStore.getState().setTempNetworks([first, second])
+
+        const definition = [{originator: "x", tools: [], instructions: "hi"}] as never
+        useTempNetworksStore.getState().updateTempNetworkDefinition(first.agentInfo.agent_name, definition)
+
+        const stored = useTempNetworksStore.getState().tempNetworks
+        expect(stored[0]?.agentNetworkDefinition).toEqual(definition)
+        expect(stored[1]?.agentNetworkDefinition).toEqual([])
+    })
+})
+
+describe("useTempNetworksStore / updateTempNetwork", () => {
+    withStrictMocks()
+
+    beforeEach(() => {
+        useTempNetworksStore.getState().setTempNetworks([])
+    })
+
+    it("remembers where only that network was published", () => {
+        useTempNetworksStore
+            .getState()
+            .upsertTempNetworks([makeNetwork("res-1", "network_alpha"), makeNetwork("res-2", "network_beta")])
+
+        useTempNetworksStore.getState().updateTempNetwork("temporary/res-1", {deployment: PUBLISHED_DEPLOYMENT})
+
+        const [alpha, beta] = useTempNetworksStore.getState().tempNetworks
+        expect(alpha.deployment).toEqual(PUBLISHED_DEPLOYMENT)
+        expect(beta.deployment).toBeUndefined()
+    })
+})

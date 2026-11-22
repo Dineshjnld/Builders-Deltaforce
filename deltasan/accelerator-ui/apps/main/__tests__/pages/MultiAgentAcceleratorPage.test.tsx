@@ -1,0 +1,108 @@
+/*
+Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+import {render, screen} from "@testing-library/react"
+import {NextRouter, useRouter} from "next/router"
+import {useSession} from "next-auth/react"
+
+import {withStrictMocks} from "../../../../__tests__/common/strictMocks"
+import {MultiAgentAcceleratorProps} from "../../../../packages/ui-common/components/MultiAgentAccelerator/MultiAgentAccelerator"
+import {useEnvironmentStore} from "../../../../packages/ui-common/state/Environment"
+import {MultiAgentAcceleratorPage} from "../../pages/multiAgentAccelerator"
+
+const MOCK_USER = "mock-user"
+const MOCK_IMAGE = "https://example.com/mock-image.png"
+
+// Backend neuro-san API server to use
+const NEURO_SAN_SERVER_URL = "https://default.example.com"
+
+const MAA_TEXT = "Mock MultiAgentAccelerator component."
+
+// Mock dependencies
+vi.mock("next-auth/react")
+vi.mock("next/router", () => ({useRouter: vi.fn()}))
+
+vi.mock("../../../../packages/ui-common/controller/agent/Agent")
+
+const mockMultiAgentAcceleratorSpy = vi.fn()
+
+vi.mock("../../../../packages/ui-common/components/MultiAgentAccelerator/MultiAgentAccelerator", () => ({
+    MultiAgentAccelerator: (props: MultiAgentAcceleratorProps) => {
+        mockMultiAgentAcceleratorSpy(props)
+        return <div>{MAA_TEXT}</div>
+    },
+}))
+
+describe("Multi Agent Accelerator Page", () => {
+    withStrictMocks()
+
+    beforeEach(() => {
+        vi.mocked(useSession).mockReturnValue({
+            status: undefined,
+            update: vi.fn(),
+            data: {
+                user: {name: MOCK_USER, image: MOCK_IMAGE},
+                expires: "",
+            },
+        })
+        vi.mocked(useRouter).mockReturnValue({query: {}} as unknown as NextRouter)
+    })
+
+    it("Should render correctly", async () => {
+        useEnvironmentStore.getState().setBackendNeuroSanApiUrl(NEURO_SAN_SERVER_URL)
+        useEnvironmentStore.getState().setEnableAuthentication(true)
+
+        render(<MultiAgentAcceleratorPage />)
+        await screen.findByText(MAA_TEXT)
+
+        expect(mockMultiAgentAcceleratorSpy).toHaveBeenCalledWith(
+            expect.objectContaining<MultiAgentAcceleratorProps>({
+                username: MOCK_USER,
+                defaultNeuroSanUrl: NEURO_SAN_SERVER_URL,
+                startTour: false,
+            })
+        )
+    })
+
+    it("Should ask the accelerator to start the tour for ?tour=true, then drop it from the URL", async () => {
+        const replace = vi.fn().mockResolvedValue(true)
+        vi.mocked(useRouter).mockReturnValue({
+            pathname: "/multiAgentAccelerator",
+            query: {other: "kept", tour: "true"},
+            replace,
+        } as unknown as NextRouter)
+
+        render(<MultiAgentAcceleratorPage />)
+        await screen.findByText(MAA_TEXT)
+
+        expect(mockMultiAgentAcceleratorSpy).toHaveBeenCalledWith(expect.objectContaining({startTour: true}))
+
+        // So a reload doesn't start the tour again
+        expect(replace).toHaveBeenCalledWith({pathname: "/multiAgentAccelerator", query: {other: "kept"}}, undefined, {
+            shallow: true,
+        })
+    })
+
+    it("Should leave the URL alone when there's no tour request", async () => {
+        const replace = vi.fn()
+        vi.mocked(useRouter).mockReturnValue({query: {}, replace} as unknown as NextRouter)
+
+        render(<MultiAgentAcceleratorPage />)
+        await screen.findByText(MAA_TEXT)
+
+        expect(replace).not.toHaveBeenCalled()
+    })
+})

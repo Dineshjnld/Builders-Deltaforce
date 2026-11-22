@@ -1,0 +1,2050 @@
+/*
+Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+import {HumanMessage} from "@langchain/core/messages"
+import {act, render, screen, waitFor, waitForElementToBeRemoved, within} from "@testing-library/react"
+import {userEvent} from "@testing-library/user-event"
+import {SnackbarProvider} from "notistack"
+import {Children, isValidElement, ReactNode, Ref} from "react"
+import * as z from "zod"
+
+import {
+    LIST_NETWORKS_RESPONSE,
+    MOCK_CONNECTIVITY_INFO,
+    TEMPORARY_NETWORK,
+    TEST_AGENT_MATH_GUY,
+    TEST_AGENT_MATH_GUY_DISPLAY,
+    TEST_AGENT_MUSIC_NERD,
+    TEST_AGENT_MUSIC_NERD_DISPLAY,
+    TEST_AGENTS_FOLDER,
+    TEST_AGENTS_FOLDER_DISPLAY,
+} from "../../../../../__tests__/common/NetworksListMock"
+import {withStrictMocks} from "../../../../../__tests__/common/strictMocks"
+import {ChatCommonHandle, ChatCommonProps} from "../../../components/AgentChat/ChatCommon/ChatCommon"
+import {AgentFlowProps} from "../../../components/MultiAgentAccelerator/AgentFlow/AgentFlow"
+import {
+    AGENT_NETWORK_DEFINITION_KEY,
+    AGENT_NETWORK_DESIGNER_ID,
+    AGENT_NETWORK_HOCON,
+    AGENT_NETWORK_NAME_KEY,
+    AGENT_PROGRESS_CONNECTIVITY_KEY,
+    AGENT_RESERVATIONS_KEY,
+    AgentNetworkDefinitionEntry,
+    EXPIRED_NETWORKS_CHECK_INTERVAL_MS,
+    GRACE_PERIOD_MS,
+    NEURO_SAN_CALLOUT_DELAY_MS,
+    SHOW_TOUR_DELAY_MS,
+    TEMPORARY_NETWORK_FOLDER,
+    TRIGGER_APP_TOUR_EVENT_NAME,
+} from "../../../components/MultiAgentAccelerator/const"
+import {MultiAgentAccelerator} from "../../../components/MultiAgentAccelerator/MultiAgentAccelerator"
+import {BYOK} from "../../../components/MultiAgentAccelerator/Schema/SlyData"
+import {SidebarProps} from "../../../components/MultiAgentAccelerator/Sidebar/Sidebar"
+import {MAIN_TOUR_STEPS} from "../../../components/MultiAgentAccelerator/Tour/MainTourSteps"
+import {
+    getAgentFunction,
+    getAgentNetworks,
+    getConnectivity,
+    sendNetworkDesignerRequest,
+} from "../../../controller/agent/Agent"
+import {getAgentIconSuggestions, getNetworkIconSuggestions} from "../../../controller/agent/IconSuggestions"
+import {NetworkIconSuggestions} from "../../../controller/Types/NetworkIconSuggestions"
+import {
+    ChatMessageType,
+    ChatResponse,
+    ConnectivityInfo,
+    FunctionResponse,
+} from "../../../generated/neuro-san/NeuroSanClient"
+import {AnnouncementId, useAnnouncementsStore} from "../../../state/Announcements"
+import {useAgentChatHistoryStore} from "../../../state/ChatHistory"
+import {ByokKeyField, LLM_PROVIDER_API_KEY_FIELD, useSettingsStore} from "../../../state/Settings"
+import {TemporaryNetwork, useTempNetworksStore} from "../../../state/TemporaryNetworks"
+import {TourPromptState, useTourStore} from "../../../state/Tour"
+import {cleanUpAgentName} from "../../../utils/AgentName"
+
+const MOCK_USER = "mock-user"
+
+/** Flatten a tour step's content (a string, or a ReactNode with e.g. <br/> line breaks) into its plain text. */
+const tourStepText = (content: ReactNode): string =>
+    Children.toArray(content)
+        .map((child) =>
+            typeof child === "string"
+                ? child
+                : isValidElement<{children?: ReactNode}>(child)
+                  ? tourStepText(child.props.children)
+                  : ""
+        )
+        .join("")
+
+// Backend neuro-san API server to use
+const NEURO_SAN_SERVER_URL = "https://default.example.com"
+
+const conversationMock = vi.fn()
+const agentFlowMock = vi.fn()
+const temporaryNetworksMock = vi.fn()
+const networkIconSuggestionsMock = vi.fn()
+let onDeleteNetwork: (a: string, b: boolean) => void
+let onSaveAgent: AgentFlowProps["onSaveAgent"]
+let setSelectedNetwork: (network: string) => void
+let onEditNetwork: (network: string) => void
+
+// Mock dependencies
+vi.mock("next-auth/react")
+
+vi.mock("../../../controller/agent/Agent")
+vi.mock("../../../controller/agent/IconSuggestions")
+
+vi.mock("../../../components/MultiAgentAccelerator/AgentFlow/AgentFlow", () => ({
+    AgentFlow: (props: AgentFlowProps) => {
+        agentFlowMock(props)
+        conversationMock(props.currentConversations)
+        onSaveAgent = props.onSaveAgent
+        return (
+            <div id="app-container">
+                <div id="settings-icon" />
+                <div id="explore-dropdown" />
+                <div id="help-dropdown" />
+                <div data-testid="mock-agent-flow">
+                    <div aria-label="Control Panel">Dummy Control Panel</div>
+                    <div id="multi-agent-accelerator-agent-flow-legend">Dummy Legend</div>
+                    <div id="llm-chat-agent-network-ui">Dummy Chat Window</div>
+                    <div id="sample-queries-box">Sample queries</div>
+                    <div id="user-input-div">User input</div>
+                    <button
+                        id="agent-network-ui-options-menu-button-container"
+                        type="button"
+                    >
+                        Show Thinking
+                    </button>
+                    <button
+                        id="save-chat-button"
+                        type="button"
+                    >
+                        Save chat
+                    </button>
+                    {props.agentsInNetwork.map((element) => {
+                        const json = JSON.stringify(element)
+                        return <div key={json}>{json}</div>
+                    })}
+                </div>
+            </div>
+        )
+    },
+}))
+
+vi.mock("../../../components/MultiAgentAccelerator/Sidebar/Sidebar", async (importOriginal) => {
+    const originalModule =
+        await importOriginal<typeof import("../../../components/MultiAgentAccelerator/Sidebar/Sidebar")>()
+
+    return {
+        ...originalModule,
+        Sidebar: (props: SidebarProps) => {
+            temporaryNetworksMock(props.temporaryNetworks)
+            networkIconSuggestionsMock(props.networkIconSuggestions)
+            onDeleteNetwork = props.onDeleteNetwork
+            onEditNetwork = props.onEditNetwork
+            setSelectedNetwork = props.setSelectedNetwork
+
+            const OriginalSidebar = originalModule.Sidebar
+            return <OriginalSidebar {...props} />
+        },
+    }
+})
+
+// Not available in JSDom. See: https://github.com/jsdom/jsdom/issues/1695
+window.HTMLElement.prototype.scrollIntoView = vi.fn()
+
+// Mock ChatCommon to call the mock function with props and support refs
+const chatCommonMock = vi.fn()
+const handleStopMock = vi.fn()
+const handleClearChatMock = vi.fn()
+
+const MATH_GUY_MESSAGE: ChatResponse = {
+    response: {
+        type: ChatMessageType.AI,
+        text: "This is a test message",
+        origin: [{tool: TEST_AGENT_MATH_GUY}],
+    },
+}
+
+const RESERVATION = TEMPORARY_NETWORK.reservation
+
+const RESERVATION_CHAT_MESSAGE: ChatResponse = {
+    response: {
+        type: ChatMessageType.AGENT_FRAMEWORK,
+        text: "This is a test message",
+        structure: {total_tokens: 100},
+        origin: [{tool: "copy_cat"}],
+        sly_data: {
+            [AGENT_RESERVATIONS_KEY]: [RESERVATION],
+        },
+    },
+}
+
+const NETWORK_HOCON_CHAT_MESSAGE: ChatResponse = {
+    response: {
+        ...RESERVATION_CHAT_MESSAGE.response,
+        sly_data: {
+            ...RESERVATION_CHAT_MESSAGE.response.sly_data,
+            [AGENT_NETWORK_HOCON]: JSON.stringify(TEMPORARY_NETWORK.networkHocon, null, 2),
+        },
+    },
+}
+
+const CONNECTIVITY_INFO: ConnectivityInfo[] = [
+    {origin: "first_origin", tools: ["some_tool"]},
+    {origin: "second_origin", tools: ["some_other_tool"]},
+]
+
+const AGENT_PROGRESS_CHAT_MESSAGE: ChatResponse = {
+    response: {
+        type: ChatMessageType.AGENT_PROGRESS,
+        structure: {
+            [AGENT_PROGRESS_CONNECTIVITY_KEY]: CONNECTIVITY_INFO,
+        },
+    },
+}
+
+let setIsAwaitingLlm: (val: boolean) => void
+let onChunkReceived: (chunk: string) => boolean
+let onStreamingStarted: () => void
+let onStreamingComplete: () => void
+
+vi.mock("../../../components/AgentChat/ChatCommon/ChatCommon", () => ({
+    ChatCommon: (props: ChatCommonProps & {ref?: Ref<ChatCommonHandle>}) => {
+        chatCommonMock(props)
+        setIsAwaitingLlm = props.setIsAwaitingLlm
+        onChunkReceived = props.onChunkReceived
+        onStreamingStarted = props.onStreamingStarted
+        onStreamingComplete = props.onStreamingComplete
+
+        // handleStop and handleClearChat refs
+        ;(props.ref as {current?: ChatCommonHandle}).current = {
+            handleStop: handleStopMock,
+            handleClearChat: handleClearChatMock,
+        }
+        return (
+            <div
+                id="test-chat-common"
+                data-testid="test-chat-common"
+            >
+                {props.selectedNetwork}
+            </div>
+        )
+    },
+}))
+
+const renderMultiAgentAccelerator = ({startTour}: {startTour?: boolean} = {}) =>
+    render(
+        <SnackbarProvider>
+            <MultiAgentAccelerator
+                defaultNeuroSanUrl={NEURO_SAN_SERVER_URL}
+                startTour={startTour}
+                username={MOCK_USER}
+            />
+        </SnackbarProvider>
+    )
+
+describe("MultiAgentAccelerator", () => {
+    withStrictMocks()
+
+    let user: ReturnType<typeof userEvent.setup>
+
+    beforeEach(async () => {
+        // This has nothing to do with Jest itself and everything to do with a bug in React Testing Library.
+        // See: https://github.com/testing-library/user-event/issues/1115#issuecomment-1565730917
+        // @ts-expect-error -- it's an ugly workaround to be removed when the above issue is fixed in RTL.
+        globalThis["jest"] = {
+            advanceTimersByTime: vi.advanceTimersByTime.bind(vi),
+        }
+
+        vi.mocked(getAgentNetworks).mockResolvedValue(LIST_NETWORKS_RESPONSE)
+        vi.mocked(getConnectivity).mockResolvedValue(MOCK_CONNECTIVITY_INFO)
+        vi.mocked(sendNetworkDesignerRequest)
+
+        user = userEvent.setup()
+
+        // Reset zustand stores
+        useTempNetworksStore.setState({tempNetworks: []})
+        useAgentChatHistoryStore.setState({history: {}})
+        useSettingsStore.getState().resetSettings()
+        useTourStore.getState().reset()
+        useAnnouncementsStore.getState().reset()
+    })
+
+    describe("Basic Rendering", () => {
+        it("should render the component and change the network when item is clicked in the sidebar", async () => {
+            renderMultiAgentAccelerator()
+
+            // click to expand networks
+            const header = await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY)
+            await user.click(header)
+
+            // Ensure Math Guy (default network) element is rendered.
+            await screen.findByText(TEST_AGENT_MATH_GUY_DISPLAY)
+
+            // Find sidebar. Will fail if <> 1 found
+            await screen.findByText("Agent Networks")
+
+            // Ensure Music Nerd is initially shown once. Will fail if <> 1 found
+            const musicNerdItem = await screen.findByText(TEST_AGENT_MUSIC_NERD_DISPLAY)
+
+            // Click Music Nerd sidebar item
+            await user.click(musicNerdItem)
+
+            // Music Nerd is selected now. Make sure we see it.
+            await screen.findByText(TEST_AGENT_MUSIC_NERD_DISPLAY)
+
+            // Make sure the page rendered ChatCommon with expected props
+            expect(chatCommonMock).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    currentUser: MOCK_USER,
+                    selectedNetwork: `${TEST_AGENTS_FOLDER}/${TEST_AGENT_MUSIC_NERD}`,
+                    neuroSanURL: NEURO_SAN_SERVER_URL,
+                    sampleQueries: MOCK_CONNECTIVITY_INFO.metadata["sample_queries"],
+                })
+            )
+        })
+
+        it("should render the component correctly with 'native names' option on or off", async () => {
+            useSettingsStore.getState().updateSettings({appearance: {useNativeNames: false}})
+            renderMultiAgentAccelerator()
+
+            // click to expand networks
+            const header = await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY)
+            await user.click(header)
+
+            // Ensure Math Guy (default network) element is rendered.
+            screen.getByText(TEST_AGENT_MATH_GUY_DISPLAY)
+
+            // Now toggle the setting to use native names
+            act(() => {
+                useSettingsStore.getState().updateSettings({appearance: {useNativeNames: true}})
+            })
+
+            // Now the native agent names should be shown instead of the cleaned up display names
+            screen.getByText(TEST_AGENTS_FOLDER)
+            screen.getByText(TEST_AGENT_MATH_GUY)
+        })
+
+        it("should handle a network with no sample queries", async () => {
+            vi.mocked(getConnectivity).mockResolvedValue({
+                ...MOCK_CONNECTIVITY_INFO,
+                metadata: {},
+            })
+            renderMultiAgentAccelerator()
+
+            // Expand networks
+            const header = await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY)
+            await user.click(header)
+
+            // Select a network to trigger getConnectivity
+            const network = await screen.findByText(TEST_AGENT_MATH_GUY_DISPLAY)
+            await user.click(network)
+
+            // Make sure the page rendered ChatCommon with expected props
+            expect(chatCommonMock).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    sampleQueries: [],
+                })
+            )
+        })
+
+        it("Should pass along network icon suggestions to the sidebar", async () => {
+            const iconSuggestions = {
+                copy_cat: "Copy",
+                date_time_provider: "DateTime",
+            } satisfies NetworkIconSuggestions
+
+            vi.mocked(getNetworkIconSuggestions).mockResolvedValue(iconSuggestions)
+
+            renderMultiAgentAccelerator()
+
+            await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY)
+
+            await waitFor(() => expect(networkIconSuggestionsMock).toHaveBeenCalledWith(iconSuggestions))
+        })
+    })
+
+    describe("Error Handling", () => {
+        it("should display error toast when an error occurs for getAgentNetworks", async () => {
+            const debugSpy = vi.spyOn(console, "debug").mockImplementation(vi.fn())
+            // Mock getAgentNetworks to reject with an error
+            vi.mocked(getAgentNetworks).mockRejectedValue(new Error("Failed to fetch agent networks"))
+
+            renderMultiAgentAccelerator()
+
+            // Assert the console.debug call
+            await waitFor(() => {
+                expect(debugSpy).toHaveBeenCalledWith(
+                    expect.stringMatching(
+                        new RegExp(`Unable to get list of Agent Networks.*${NEURO_SAN_SERVER_URL}`, "u")
+                    )
+                )
+            })
+        })
+
+        it("should display error toast when an error occurs for getConnectivity", async () => {
+            const debugSpy = vi.spyOn(console, "debug").mockImplementation(vi.fn())
+            // Mock getAgentNetworks to reject with an error
+            vi.mocked(getConnectivity).mockRejectedValue(new Error("Failed to fetch connectivity"))
+
+            renderMultiAgentAccelerator()
+
+            // Expand networks
+            const header = await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY)
+            await user.click(header)
+
+            // Select a network to trigger getConnectivity
+            const network = await screen.findByText(TEST_AGENT_MATH_GUY_DISPLAY)
+            await user.click(network)
+
+            // Assert the console.error call
+            await waitFor(() => {
+                expect(debugSpy).toHaveBeenCalledWith(
+                    expect.stringMatching(
+                        new RegExp(
+                            "Unable to get agent list.*" +
+                                `${TEST_AGENTS_FOLDER_DISPLAY} ${TEST_AGENT_MATH_GUY_DISPLAY}` +
+                                `.*${NEURO_SAN_SERVER_URL}.*`,
+                            "u"
+                        )
+                    )
+                )
+            })
+        })
+
+        it("Should handle getNetworkIconSuggestions failure gracefully", async () => {
+            vi.mocked(getNetworkIconSuggestions).mockRejectedValue(new Error("Failed to fetch icon suggestions"))
+
+            const warnSpy = vi.spyOn(console, "warn").mockImplementation(vi.fn())
+            renderMultiAgentAccelerator()
+            await waitFor(() => {
+                expect(warnSpy).toHaveBeenCalledWith(
+                    expect.stringContaining("Unable to get network icon suggestions"),
+                    expect.any(Error)
+                )
+            })
+        })
+
+        it("Should handle getAgentIconSuggestions failure gracefully", async () => {
+            vi.mocked(getAgentIconSuggestions).mockRejectedValue(new Error("Failed to fetch icon suggestions"))
+
+            const warnSpy = vi.spyOn(console, "warn").mockImplementation(vi.fn())
+
+            renderMultiAgentAccelerator()
+
+            const header = await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY)
+            await user.click(header)
+
+            const network = await screen.findByText(TEST_AGENT_MATH_GUY_DISPLAY)
+            await user.click(network)
+
+            await waitFor(() => {
+                expect(warnSpy).toHaveBeenCalledWith(
+                    expect.stringContaining("Unable to get agent icon suggestions"),
+                    expect.any(Error)
+                )
+            })
+        })
+    })
+
+    describe("Workspace layout", () => {
+        it("renders the canvas full-bleed behind floating panels", async () => {
+            renderMultiAgentAccelerator()
+            await screen.findByText("Agent Networks")
+
+            const container = document.getElementById("multi-agent-accelerator-container")
+            const canvas = document.getElementById("multi-agent-accelerator-canvas")
+            expect(canvas?.parentElement).toBe(container)
+            expect(canvas).toContainElement(document.getElementById("multi-agent-accelerator-agent-flow-container"))
+
+            // Sidebar and chat live in floating cards inside the resizable panels
+            expect(document.getElementById("multi-agent-accelerator-left-card")).toContainElement(
+                document.getElementById("multi-agent-accelerator-sidebar-sidebar")
+            )
+            expect(document.getElementById("multi-agent-accelerator-right-card")).toContainElement(
+                screen.getByTestId("test-chat-common")
+            )
+            expect(document.getElementById("multi-agent-accelerator-left-card")).toHaveAttribute(
+                "data-collapsed",
+                "false"
+            )
+
+            // AgentFlow is told which part of the canvas the panels leave uncovered
+            expect(agentFlowMock).toHaveBeenLastCalledWith(
+                expect.objectContaining({
+                    safeArea: expect.objectContaining({bottom: 14}),
+                })
+            )
+        })
+
+        it("shows the empty state prompt until a network is selected, and can open the designer", async () => {
+            renderMultiAgentAccelerator()
+            await screen.findByText("Agent Networks")
+
+            expect(document.getElementById("multi-agent-accelerator-empty-state")).toBeInTheDocument()
+            expect(screen.getByText(/Pick one from Agent Networks/u)).toBeInTheDocument()
+
+            await user.click(screen.getByRole("button", {name: "Open Agent Network Designer"}))
+
+            await waitFor(() => {
+                expect(chatCommonMock).toHaveBeenLastCalledWith(
+                    expect.objectContaining({selectedNetwork: AGENT_NETWORK_DESIGNER_ID})
+                )
+            })
+            await waitFor(() => {
+                expect(document.getElementById("multi-agent-accelerator-empty-state")).not.toBeInTheDocument()
+            })
+        })
+    })
+
+    describe("Zen Mode", () => {
+        const expectPanelState = (panelTestId: string, expectedState: "expanded" | "collapsed") => {
+            const panel = screen.getByTestId(panelTestId)
+            if (expectedState === "expanded") {
+                expect(panel).not.toHaveStyle({"flex-grow": 0})
+            } else {
+                expect(panel).toHaveStyle({"flex-grow": 0})
+            }
+        }
+
+        it("should handle Zen mode animation correctly", async () => {
+            renderMultiAgentAccelerator()
+
+            await screen.findByText("Agent Networks")
+
+            // Left panel: Make sure sidebar is visible
+            await waitFor(() => {
+                expect(document.getElementById("multi-agent-accelerator-sidebar-sidebar")).toBeVisible()
+            })
+
+            // Center panel: Agent Flow
+            await waitFor(() => {
+                expect(document.getElementById("multi-agent-accelerator-agent-flow-container")).toBeVisible()
+            })
+
+            // Right panel: Chat window
+            expect(await screen.findByTestId("test-chat-common")).toBeVisible()
+
+            // Make sure Stop button is not in document
+            expect(screen.queryByLabelText("Stop")).not.toBeInTheDocument()
+
+            // Force Zen mode by calling onStreamingStarted
+            await act(async () => {
+                setIsAwaitingLlm(true)
+                onStreamingStarted()
+            })
+
+            // Stop button should be in document in Zen mode
+            await screen.findByLabelText("Stop")
+
+            // Left panel: should be collapsed in Zen mode
+            expectPanelState("multi-agent-accelerator-left-panel", "collapsed")
+
+            // Center panel: Agent Flow. Should still be visible in Zen mode
+            expectPanelState("multi-agent-accelerator-center-panel", "expanded")
+
+            // Right panel: Chat window should be hidden in Zen mode
+            expectPanelState("multi-agent-accelerator-right-panel", "collapsed")
+
+            // Floating cards slide out and become inert while their panels are collapsed
+            await waitFor(() => {
+                expect(document.getElementById("multi-agent-accelerator-left-card")).toHaveAttribute(
+                    "data-collapsed",
+                    "true"
+                )
+            })
+            expect(document.getElementById("multi-agent-accelerator-right-card")).toHaveAttribute(
+                "data-collapsed",
+                "true"
+            )
+
+            // Simulate "end streaming"
+            await act(async () => {
+                setIsAwaitingLlm(false)
+                onStreamingComplete()
+            })
+
+            // Panels should now be expanded again
+            // Left panel
+            expectPanelState("multi-agent-accelerator-left-panel", "expanded")
+
+            // Center panel
+            expectPanelState("multi-agent-accelerator-center-panel", "expanded")
+
+            // Right panel
+            expectPanelState("multi-agent-accelerator-right-panel", "expanded")
+        })
+
+        it("should clear the panel transition flag once the transition timeout elapses", async () => {
+            vi.useFakeTimers()
+            renderMultiAgentAccelerator()
+            await screen.findByText("Agent Networks")
+
+            await act(async () => {
+                setIsAwaitingLlm(true)
+                onStreamingStarted()
+            })
+            // Restart the transition to exercise the clear-existing-timer path too
+            await act(async () => {
+                setIsAwaitingLlm(false)
+                onStreamingComplete()
+            })
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(1000)
+            })
+
+            expectPanelState("multi-agent-accelerator-center-panel", "expanded")
+        })
+
+        // Make only the zero-size workspace marker (aria-hidden) report the given rect; everything else is real.
+        const mockMarkerRect = (rect: DOMRect | undefined) => {
+            const original = Element.prototype.getBoundingClientRect
+            /* eslint-disable unicorn/no-this-outside-of-class */
+            return vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+                return this.getAttribute("aria-hidden") === "true" ? rect : original.call(this)
+            })
+            /* eslint-enable unicorn/no-this-outside-of-class */
+        }
+
+        it("should tolerate a missing bounding rect for the workspace marker", async () => {
+            const spy = mockMarkerRect(undefined)
+            try {
+                renderMultiAgentAccelerator()
+                await screen.findByText("Agent Networks")
+            } finally {
+                spy.mockRestore()
+            }
+        })
+
+        it("should keep the existing offset when the workspace marker rect is unchanged", async () => {
+            // Exactly the component's default offset (top 76, left 0)
+            const spy = mockMarkerRect({top: 76, left: 0} as DOMRect)
+            try {
+                renderMultiAgentAccelerator()
+                await screen.findByText("Agent Networks")
+            } finally {
+                spy.mockRestore()
+            }
+        })
+
+        it("should correctly handle Zen mode being disabled", async () => {
+            // Disable Zen mode
+            useSettingsStore.getState().updateSettings({behavior: {enableZenMode: false}})
+
+            renderMultiAgentAccelerator()
+
+            screen.getByText("Agent Networks")
+
+            // Simulate streaming started
+            await act(async () => {
+                setIsAwaitingLlm(true)
+                onStreamingStarted()
+            })
+
+            // No panels should be collapsed during streaming, since Zen mode is disabled.
+            // Left panel
+            expectPanelState("multi-agent-accelerator-left-panel", "expanded")
+
+            // Center panel
+            expectPanelState("multi-agent-accelerator-center-panel", "expanded")
+
+            // Right panel
+            expectPanelState("multi-agent-accelerator-right-panel", "expanded")
+
+            // Simulate "end streaming"
+            await act(async () => {
+                setIsAwaitingLlm(false)
+                onStreamingComplete()
+            })
+
+            // Panels should still all be expanded after streaming complete
+            // Left panel
+            expectPanelState("multi-agent-accelerator-left-panel", "expanded")
+
+            // Center panel
+            expectPanelState("multi-agent-accelerator-center-panel", "expanded")
+
+            // Right panel
+            expectPanelState("multi-agent-accelerator-right-panel", "expanded")
+        })
+    })
+
+    describe("Chat Message Handling", () => {
+        it("should handle receiving an agent conversation chat message", async () => {
+            renderMultiAgentAccelerator()
+
+            // Simulate receiving a chat message
+            const mockChunk = JSON.stringify(MATH_GUY_MESSAGE)
+
+            await act(async () => {
+                onChunkReceived(mockChunk)
+            })
+
+            expect(chatCommonMock).toHaveBeenCalled()
+
+            // Verify the conversations array contains the expected agent
+            const conversationCall = conversationMock.mock.calls[conversationMock.mock.calls.length - 1][0]
+            const hasAgent = conversationCall.some((conv: {agents: Set<string>}) =>
+                [...conv.agents].includes(TEST_AGENT_MATH_GUY)
+            )
+            expect(hasAgent).toBe(true)
+        })
+
+        it("should handle receiving a bad message", async () => {
+            // Make extractConversations return failure (null) for this one test to simulate a critical error
+            const agentConversations = await import("../../../components/MultiAgentAccelerator/AgentConversations")
+            vi.spyOn(agentConversations, "extractConversations").mockReturnValue(null)
+
+            renderMultiAgentAccelerator()
+
+            // Simulate receiving a chat message
+            const mockChunk = JSON.stringify(MATH_GUY_MESSAGE)
+
+            await act(async () => {
+                onChunkReceived(mockChunk)
+            })
+
+            expect(chatCommonMock).toHaveBeenCalled()
+
+            // Verify the conversations array contains the expected agent
+            const calls = conversationMock.mock.calls
+
+            // Assert that conversationMock was always called with an empty array (no conversations)
+            // due to the failure in extractConversations
+            calls.forEach((call) => {
+                expect(call[0]).toEqual([])
+            })
+        })
+
+        it("should handle receiving an end of conversation chat message", async () => {
+            renderMultiAgentAccelerator()
+
+            // Set up one active agent
+            const activeAgentChunk = JSON.stringify(MATH_GUY_MESSAGE)
+            await act(async () => {
+                onChunkReceived(activeAgentChunk)
+            })
+
+            // Verify the conversation mock was called
+            expect(conversationMock).toHaveBeenCalled()
+
+            // End of conversation message for unrelated agent
+            const endOfConversationDifferentAgent: ChatResponse = {
+                response: {
+                    type: ChatMessageType.AGENT,
+                    text: "This is a test message",
+                    // One of "hints" for end of conversation is having a structure field containing total_tokens
+                    structure: {total_tokens: 100},
+                    origin: [{tool: "Definitely not math guy"}],
+                },
+            }
+
+            await act(async () => {
+                onChunkReceived(JSON.stringify(endOfConversationDifferentAgent))
+            })
+
+            // Verify Math Guy is still in the conversations
+            expect(conversationMock).toHaveBeenCalled()
+            const latestCall = conversationMock.mock.calls[conversationMock.mock.calls.length - 1][0]
+            const hasMathGuy = latestCall.some((conv: {agents: Set<string>}) => conv.agents.has(TEST_AGENT_MATH_GUY))
+            expect(hasMathGuy).toBe(true)
+
+            conversationMock.mockClear()
+
+            // Now the end of conversation message for the active agent
+            const chatMessage: ChatResponse = {
+                response: {
+                    type: ChatMessageType.AGENT,
+                    text: "This is a test message",
+                    structure: {total_tokens: 100},
+                    origin: [{tool: TEST_AGENT_MATH_GUY}],
+                },
+            }
+
+            await act(async () => {
+                onChunkReceived(JSON.stringify(chatMessage))
+            })
+        })
+
+        it("Should handle receiving something that isn't a ChatMessage", async () => {
+            renderMultiAgentAccelerator()
+            await act(async () => {
+                const result = onChunkReceived("I am not a ChatMessage")
+                expect(result).toEqual(true)
+            })
+        })
+    })
+
+    describe("Interaction Handling", () => {
+        it("calls handleStopMock on Escape key when isAwaitingLlm is true", async () => {
+            renderMultiAgentAccelerator()
+
+            await act(async () => {
+                setIsAwaitingLlm(true)
+            })
+
+            // Simulate Escape key
+            await userEvent.keyboard("{Escape}")
+
+            expect(handleStopMock).toHaveBeenCalledTimes(1)
+        })
+
+        it("ignores presses of keys other than Escape", async () => {
+            renderMultiAgentAccelerator()
+
+            await act(async () => {
+                setIsAwaitingLlm(true)
+            })
+
+            // Simulate Escape key
+            await userEvent.keyboard("{Enter}")
+
+            expect(handleStopMock).not.toHaveBeenCalled()
+        })
+
+        it("Should clear the chat when the Add New Network button is clicked", async () => {
+            renderMultiAgentAccelerator()
+            await screen.findByTestId("test-chat-common")
+
+            handleClearChatMock.mockClear()
+
+            const addButton = screen.getByRole("button", {name: "Add New Network"})
+            await userEvent.click(addButton)
+
+            expect(handleClearChatMock).toHaveBeenCalledTimes(1)
+        })
+
+        it("Should NOT clear the chat when a regular network is selected", async () => {
+            renderMultiAgentAccelerator()
+            await screen.findByTestId("test-chat-common")
+
+            handleClearChatMock.mockClear()
+
+            await act(async () => {
+                setSelectedNetwork(`${TEST_AGENTS_FOLDER}/${TEST_AGENT_MATH_GUY}`)
+            })
+
+            expect(handleClearChatMock).not.toHaveBeenCalled()
+        })
+
+        it("Should not allow user to select an expired temporary network", async () => {
+            const expiredTemporaryNetwork: TemporaryNetwork = {
+                ...TEMPORARY_NETWORK,
+                reservation: {
+                    ...TEMPORARY_NETWORK.reservation,
+                    expiration_time_in_seconds: Math.floor(Date.now() / 1000) - 60,
+                },
+            }
+
+            useTempNetworksStore.setState({tempNetworks: [expiredTemporaryNetwork]})
+
+            renderMultiAgentAccelerator()
+
+            // Expand temporary networks section
+            const header = await screen.findByText(cleanUpAgentName(TEMPORARY_NETWORK_FOLDER))
+            await user.click(header)
+
+            const displayAgentName = cleanUpAgentName(expiredTemporaryNetwork.agentNetworkName)
+            const tempNetworkItem = await screen.findByText(displayAgentName)
+
+            // Mouse over -- should get "expired" Tooltip
+            await user.hover(tempNetworkItem)
+            await screen.findByText(/Expired/u)
+
+            // Clear previous mock calls
+            chatCommonMock.mockClear()
+
+            await user.click(tempNetworkItem)
+
+            // Network expired; clicking should have no effect
+            expect(chatCommonMock).not.toHaveBeenCalled()
+        })
+    })
+
+    describe("Agent Network Designer integration", () => {
+        type NetworkDesignerErrorScenario = {
+            readonly scenario: string
+            readonly streamChunks: string[]
+            readonly agentNetworkName: string
+            readonly expectedLog: string
+        }
+
+        // Render the page, feed the default reservation chunk, and wait until the resulting temp network shows
+        // up in `temporaryNetworksMock`. Returns the expected agent name for follow-up assertions.
+        const seedTemporaryNetworkFromDefaultReservation = async (): Promise<string> => {
+            renderMultiAgentAccelerator()
+            await act(async () => {
+                onChunkReceived(JSON.stringify(RESERVATION_CHAT_MESSAGE))
+            })
+            const expectedAgentName = `${TEMPORARY_NETWORK_FOLDER}/${RESERVATION.reservation_id}`
+            await waitFor(() => {
+                expect(temporaryNetworksMock).toHaveBeenCalledWith(
+                    expect.arrayContaining([
+                        expect.objectContaining({
+                            agentInfo: expect.objectContaining({
+                                agent_name: expectedAgentName,
+                            }),
+                        }),
+                    ])
+                )
+            })
+            return expectedAgentName
+        }
+        const UPDATED_DEFINITION: AgentNetworkDefinitionEntry[] = [{origin: "copy_cat", tools: []}]
+
+        // Mock the network designer stream so onSaveAgent's chunk collector receives the given chunks.
+        const mockDesignerStream = (...chunks: string[]) => {
+            vi.mocked(sendNetworkDesignerRequest).mockImplementation(async (...args: unknown[]) => {
+                const onChunk = args[6] as (chunk: string) => void
+                chunks.forEach((chunk) => onChunk(chunk))
+            })
+        }
+
+        const renderAndWaitForSidebar = async () => {
+            renderMultiAgentAccelerator()
+            await screen.findByText("Agent Networks")
+        }
+
+        const saveAgent = (agentNetworkName = RESERVATION.reservation_id) =>
+            act(async () => {
+                await onSaveAgent("copy_cat", UPDATED_DEFINITION, agentNetworkName, new AbortController().signal)
+            })
+
+        it("Should detect agent registrations in the chat stream", async () => {
+            renderMultiAgentAccelerator()
+
+            // Set up a temporary network
+            await act(async () => {
+                onChunkReceived(JSON.stringify(RESERVATION_CHAT_MESSAGE))
+            })
+
+            expect(chatCommonMock).toHaveBeenCalled()
+
+            const agentName = `${TEMPORARY_NETWORK_FOLDER}/${RESERVATION.reservation_id}`
+
+            const expectedTemporaryNetwork: TemporaryNetwork = {
+                reservation: expect.objectContaining(RESERVATION),
+                agentInfo: expect.objectContaining({
+                    agent_name: agentName,
+                }),
+                agentNetworkName: RESERVATION.reservation_id,
+                networkHocon: null,
+            }
+
+            expect(temporaryNetworksMock).toHaveBeenCalledWith([expectedTemporaryNetwork])
+        })
+
+        it("Should detect network hocon in the chat stream", async () => {
+            renderMultiAgentAccelerator()
+
+            // Process the chunk with the network hocon
+            await act(async () => {
+                onChunkReceived(JSON.stringify(NETWORK_HOCON_CHAT_MESSAGE))
+            })
+
+            expect(temporaryNetworksMock).toHaveBeenCalledWith([
+                expect.objectContaining({
+                    networkHocon: NETWORK_HOCON_CHAT_MESSAGE.response.sly_data?.[AGENT_NETWORK_HOCON],
+                }),
+            ])
+        })
+
+        it("Should store agent_network_definition under the temporary network's own store entry", async () => {
+            // When a reservation arrives alongside sly_data that contains agent_network_definition,
+            // that data should be stored on the temporary network's own entry in the temp-networks
+            // store — NOT in the chat history sly_data.
+            const agentNetworkDefinition: AgentNetworkDefinitionEntry[] = [
+                {origin: "copy_cat", tools: [], display_as: "llm_agent", instructions: "Copy everything."},
+            ]
+            const reservationWithDefinition: ChatResponse = {
+                response: {
+                    ...RESERVATION_CHAT_MESSAGE.response,
+                    sly_data: {
+                        ...RESERVATION_CHAT_MESSAGE.response.sly_data,
+                        [AGENT_NETWORK_DEFINITION_KEY]: agentNetworkDefinition,
+                    },
+                },
+            }
+
+            renderMultiAgentAccelerator()
+
+            await act(async () => {
+                onChunkReceived(JSON.stringify(reservationWithDefinition))
+            })
+
+            const expectedNetworkKey = `${TEMPORARY_NETWORK_FOLDER}/${RESERVATION.reservation_id}`
+
+            // The agent_network_definition must be stored on the temporary network's own entry
+            const storedNetwork = useTempNetworksStore
+                .getState()
+                .tempNetworks.find((n) => n.agentInfo.agent_name === expectedNetworkKey)
+            expect(storedNetwork).toBeDefined()
+            expect(storedNetwork?.agentNetworkDefinition).toEqual(agentNetworkDefinition)
+        })
+
+        it("Should store agent_network_definition independently for two different temporary networks", async () => {
+            // Each temporary network must have its own independent agentNetworkDefinition entry.
+            const definitionA: AgentNetworkDefinitionEntry[] = [
+                {
+                    origin: "agent_alpha",
+                    tools: [],
+                    display_as: "llm_agent",
+                    instructions: "Network A instructions.",
+                },
+            ]
+            const definitionB: AgentNetworkDefinitionEntry[] = [
+                {
+                    origin: "agent_beta",
+                    tools: [],
+                    display_as: "llm_agent",
+                    instructions: "Network B instructions.",
+                },
+            ]
+
+            const reservationA = {
+                reservation_id: "res-a",
+                lifetime_in_seconds: 3600,
+                expiration_time_in_seconds: Math.floor(Date.now() / 1000) + 3600,
+            }
+            const reservationB = {
+                reservation_id: "res-b",
+                lifetime_in_seconds: 3600,
+                expiration_time_in_seconds: Math.floor(Date.now() / 1000) + 3600,
+            }
+
+            const chunkA: ChatResponse = {
+                response: {
+                    type: ChatMessageType.AGENT_FRAMEWORK,
+                    text: "",
+                    origin: [{tool: "copy_cat"}],
+                    sly_data: {
+                        [AGENT_RESERVATIONS_KEY]: [reservationA],
+                        [AGENT_NETWORK_DEFINITION_KEY]: definitionA,
+                    },
+                },
+            }
+            const chunkB: ChatResponse = {
+                response: {
+                    type: ChatMessageType.AGENT_FRAMEWORK,
+                    text: "",
+                    origin: [{tool: "copy_cat"}],
+                    sly_data: {
+                        [AGENT_RESERVATIONS_KEY]: [reservationB],
+                        [AGENT_NETWORK_DEFINITION_KEY]: definitionB,
+                    },
+                },
+            }
+
+            renderMultiAgentAccelerator()
+
+            await act(async () => {
+                onChunkReceived(JSON.stringify(chunkA))
+            })
+            await act(async () => {
+                onChunkReceived(JSON.stringify(chunkB))
+            })
+
+            const keyA = `${TEMPORARY_NETWORK_FOLDER}/${reservationA.reservation_id}`
+            const keyB = `${TEMPORARY_NETWORK_FOLDER}/${reservationB.reservation_id}`
+
+            const defA = useTempNetworksStore
+                .getState()
+                .tempNetworks.find((n) => n.agentInfo.agent_name === keyA)?.agentNetworkDefinition
+            const defB = useTempNetworksStore
+                .getState()
+                .tempNetworks.find((n) => n.agentInfo.agent_name === keyB)?.agentNetworkDefinition
+
+            // Each network must have its own definition
+            expect(defA).toEqual(definitionA)
+            expect(defB).toEqual(definitionB)
+
+            // Sanity: definitions must not bleed across networks
+            expect(defA).not.toEqual(definitionB)
+            expect(defB).not.toEqual(definitionA)
+        })
+
+        it("Should detect agent progress messages in the chat stream", async () => {
+            renderMultiAgentAccelerator()
+
+            const popperTitle = "Network Preview"
+
+            // Popover should not be in the DOM before selecting the network
+            expect(screen.queryByText(popperTitle)).not.toBeInTheDocument()
+
+            await act(async () => {
+                setSelectedNetwork(AGENT_NETWORK_DESIGNER_ID)
+            })
+
+            // Need to simulate starting the stream to trigger the popover for the Agent Network Designer
+            vi.spyOn(console, "debug").mockImplementation(vi.fn())
+            await act(async () => {
+                onStreamingStarted()
+            })
+
+            // Popover should be displayed now we're in Agent Network Designer mode
+            screen.getByText(popperTitle)
+
+            // Process the chunk with the agent progress message
+            await act(async () => {
+                onChunkReceived(JSON.stringify(AGENT_PROGRESS_CHAT_MESSAGE))
+            })
+
+            // Now network progress should be displayed in the popover.
+            CONNECTIVITY_INFO.forEach((info) => {
+                screen.getByText(JSON.stringify(info))
+            })
+
+            // Simulate streaming end to close the popover
+            await act(async () => {
+                onStreamingComplete()
+            })
+
+            // Popover should be gone
+            expect(screen.queryByText(popperTitle)).not.toBeInTheDocument()
+        })
+
+        it("Should handle non-progress messages while in Agent Network Designer mode without crashing", async () => {
+            renderMultiAgentAccelerator()
+
+            await act(async () => {
+                setSelectedNetwork(AGENT_NETWORK_DESIGNER_ID)
+            })
+
+            // Need to simulate starting the stream to trigger the popover for the Agent Network Designer
+            vi.spyOn(console, "debug").mockImplementation(vi.fn())
+            await act(async () => {
+                onStreamingStarted()
+            })
+
+            // Process the chunk with a random message
+            await act(async () => {
+                // Wrong message type
+                onChunkReceived(JSON.stringify(MATH_GUY_MESSAGE))
+            })
+
+            // Should still say "awaiting status" in the popover because we never got a progress message
+            screen.getByText(/Awaiting status.../u)
+
+            // Right message type, even has `structure` field, but no progress info
+            await act(async () => {
+                // Wrong message type
+                onChunkReceived(JSON.stringify(RESERVATION_CHAT_MESSAGE))
+            })
+
+            // Should still say "awaiting status" in the popover because we never got a progress message
+            screen.getByText(/Awaiting status.../u)
+        })
+
+        it("Should handle deletion of temporary networks", async () => {
+            const expectedAgentName = await seedTemporaryNetworkFromDefaultReservation()
+            temporaryNetworksMock.mockClear()
+
+            // Seed chat history for the network so we can verify it is cleared on delete.
+            useAgentChatHistoryStore
+                .getState()
+                .updateChatHistory(expectedAgentName, [new HumanMessage("hello from temp network")])
+            expect(useAgentChatHistoryStore.getState().history[expectedAgentName]).toBeDefined()
+
+            // Select the network so the active-network cleanup branch (clear selection, reset agent counts) runs.
+            const tempNetworkItem = await screen.findByText(cleanUpAgentName(RESERVATION.reservation_id))
+            await user.click(tempNetworkItem)
+
+            // Simulate user deleting the temporary network
+            await act(async () => onDeleteNetwork(expectedAgentName, false))
+
+            // Should be a confirmation modal
+            const modal = screen.getByTestId("delete-network-confirmation-modal-confirm-main")
+            const confirmButton = within(modal).getByRole("button", {name: "Confirm"})
+            await user.click(confirmButton)
+
+            // Modal should close and temporary network should be removed
+            expect(screen.queryByTestId("delete-network-confirmation-modal-confirm-main")).not.toBeInTheDocument()
+
+            // Make sure network deleted
+            expect(temporaryNetworksMock).toHaveBeenCalledWith([])
+
+            // Chat history for the deleted network should have been purged from the store (IndexedDB).
+            expect(useAgentChatHistoryStore.getState().history[expectedAgentName]).toBeUndefined()
+
+            // ChatCommon's selectedNetwork should be cleared, proving the active-network deselection branch ran.
+            expect(chatCommonMock).toHaveBeenLastCalledWith(
+                expect.objectContaining({
+                    selectedNetwork: null,
+                })
+            )
+        })
+
+        it("Should handle deleting expired temporary networks without confirmation", async () => {
+            const expectedAgentName = await seedTemporaryNetworkFromDefaultReservation()
+            temporaryNetworksMock.mockClear()
+
+            // Seed chat history for the network so we can verify it is cleared on delete.
+            useAgentChatHistoryStore
+                .getState()
+                .updateChatHistory(expectedAgentName, [new HumanMessage("hello from expired network")])
+            expect(useAgentChatHistoryStore.getState().history[expectedAgentName]).toBeDefined()
+
+            // Select the network so the active-network cleanup branch runs.
+            const tempNetworkItem = await screen.findByText(cleanUpAgentName(RESERVATION.reservation_id))
+            await user.click(tempNetworkItem)
+
+            // Simulate user deleting the expired temporary network
+            await act(async () => onDeleteNetwork(expectedAgentName, true))
+
+            // Should delete without confirmation
+            expect(screen.queryByTestId("delete-network-confirmation-modal-confirm-main")).not.toBeInTheDocument()
+
+            // Make sure network deleted
+            expect(temporaryNetworksMock).toHaveBeenCalledWith([])
+
+            // Chat history for the deleted network should have been purged.
+            expect(useAgentChatHistoryStore.getState().history[expectedAgentName]).toBeUndefined()
+
+            // Active-network deselection should have run (selectedNetwork becomes null).
+            expect(chatCommonMock).toHaveBeenLastCalledWith(
+                expect.objectContaining({
+                    selectedNetwork: null,
+                })
+            )
+        })
+
+        it("Should delete an unselected temporary network without touching the active selection", async () => {
+            const expectedAgentName = await seedTemporaryNetworkFromDefaultReservation()
+
+            // Don't select the temp network — leave it unselected so the active-selection branch in the
+            // delete handler does NOT fire. This covers the else-branch of `selectedNetwork === networkId`.
+            temporaryNetworksMock.mockClear()
+            chatCommonMock.mockClear()
+
+            await act(async () => onDeleteNetwork(expectedAgentName, true))
+
+            // Network removed, but selection (which was already null) should not have been re-cleared via this path.
+            expect(temporaryNetworksMock).toHaveBeenCalledWith([])
+            expect(useAgentChatHistoryStore.getState().history[expectedAgentName]).toBeUndefined()
+        })
+
+        it("Should delete an unselected temporary network via the confirmation modal", async () => {
+            const expectedAgentName = await seedTemporaryNetworkFromDefaultReservation()
+
+            // Leave the network unselected so the else-branch of `selectedNetwork === networkToBeDeleted`
+            // inside the confirmation-modal handler runs.
+            temporaryNetworksMock.mockClear()
+
+            await act(async () => onDeleteNetwork(expectedAgentName, false))
+            const modal = screen.getByTestId("delete-network-confirmation-modal-confirm-main")
+            await user.click(within(modal).getByRole("button", {name: "Confirm"}))
+
+            expect(temporaryNetworksMock).toHaveBeenCalledWith([])
+            expect(useAgentChatHistoryStore.getState().history[expectedAgentName]).toBeUndefined()
+        })
+
+        it("Should leave the network alone when the user cancels the delete confirmation modal", async () => {
+            const expectedAgentName = await seedTemporaryNetworkFromDefaultReservation()
+            temporaryNetworksMock.mockClear()
+
+            // Open the modal, then cancel.
+            await act(async () => onDeleteNetwork(expectedAgentName, false))
+            const modal = screen.getByTestId("delete-network-confirmation-modal-confirm-main")
+            const cancelButton = within(modal).getByRole("button", {name: "Cancel"})
+            await user.click(cancelButton)
+
+            // Modal closes and the network is NOT deleted.
+            expect(screen.queryByTestId("delete-network-confirmation-modal-confirm-main")).not.toBeInTheDocument()
+            expect(temporaryNetworksMock).not.toHaveBeenCalledWith([])
+        })
+
+        it("Should handle temporary networks expiring", async () => {
+            const now = Date.now()
+            vi.useFakeTimers({now})
+
+            const localUser = userEvent.setup({
+                advanceTimers: vi.advanceTimersByTime,
+            })
+
+            renderMultiAgentAccelerator()
+
+            // Set up a temporary network
+            const expirationTimeSeconds = 60
+            const reservation: TemporaryNetwork = {
+                ...TEMPORARY_NETWORK,
+                reservation: {
+                    ...TEMPORARY_NETWORK.reservation,
+                    expiration_time_in_seconds: Math.floor(now / 1000) + expirationTimeSeconds,
+                },
+            }
+
+            // Simulated chat response for the temp network
+            const reservationChatMessage: ChatResponse = {
+                response: {
+                    ...RESERVATION_CHAT_MESSAGE.response,
+                    sly_data: {
+                        [AGENT_RESERVATIONS_KEY]: [reservation.reservation],
+                    },
+                },
+            }
+
+            // Feed it the temp networks chunk
+            await act(async () => {
+                onChunkReceived(JSON.stringify(reservationChatMessage))
+            })
+
+            // Make sure network saved to store
+            expect(useTempNetworksStore.getState().tempNetworks.length).toBe(1)
+
+            const expectedNetworkName = `${TEMPORARY_NETWORK_FOLDER}/${TEMPORARY_NETWORK.reservation.reservation_id}`
+
+            // Seed chat history so we can verify the reaper purges it after the grace period.
+            useAgentChatHistoryStore
+                .getState()
+                .updateChatHistory(expectedNetworkName, [new HumanMessage("hello before expiry")])
+            expect(useAgentChatHistoryStore.getState().history[expectedNetworkName]).toBeDefined()
+
+            // Not expired yet so we should see the network
+            const temporaryNetworkNode = document.querySelector(
+                `[data-itemid="${CSS.escape(expectedNetworkName)}"]`
+            ) satisfies HTMLElement
+
+            expect(temporaryNetworkNode).not.toBeNull()
+
+            const displayAgentName = cleanUpAgentName(TEMPORARY_NETWORK.reservation.reservation_id)
+            screen.getByText(displayAgentName)
+
+            // Make sure we see the temp network
+            const tempNetworkItem = await within(temporaryNetworkNode).findByText(displayAgentName)
+
+            // Click the network to select it
+            await localUser.click(tempNetworkItem)
+
+            // ChatCommon should be called with the selected network as the target agent -- a bit of an indirect way
+            // to verify that the network was selected. There may be a more elegant way to do this.
+            expect(chatCommonMock).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    selectedNetwork: expectedNetworkName,
+                })
+            )
+
+            // Reset mock calls so we have a clean slate
+            chatCommonMock.mockClear()
+
+            // First time "expired check" runs, it should not be expired yet
+            act(() => {
+                vi.advanceTimersByTime(EXPIRED_NETWORKS_CHECK_INTERVAL_MS)
+            })
+
+            // Verify that ChatCommon was called with the selected network still intact, meaning it was not expired yet.
+            expect(chatCommonMock).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    selectedNetwork: expectedNetworkName,
+                })
+            )
+
+            // Reset mock calls so we have a clean slate
+            chatCommonMock.mockClear()
+
+            // advanced past expiration time but still within grace period, meaning we show the network but flag it as
+            // expired and do not let the user select it
+            act(() => {
+                vi.advanceTimersByTime(expirationTimeSeconds * 1000)
+            })
+
+            // Wait for post-expiry renders to settle and verify network was deselected (null was passed to ChatCommon)
+            await waitFor(() => {
+                expect(chatCommonMock).toHaveBeenLastCalledWith(
+                    expect.objectContaining({
+                        selectedNetwork: null,
+                    })
+                )
+            })
+
+            // ...but should still be in the store since we're within the grace period
+            expect(useTempNetworksStore.getState().tempNetworks.length).toBe(1)
+
+            // Requery for stability
+            const expiredTemporaryNetworkNode = document.querySelector(
+                `[data-itemid="${CSS.escape(expectedNetworkName)}"]`
+            ) satisfies HTMLElement
+
+            expect(expiredTemporaryNetworkNode).not.toBeNull()
+
+            const expiredTempNetworkItem = await within(expiredTemporaryNetworkNode).findByText(displayAgentName)
+
+            // Mouse over -- should get "expired" Tooltip
+            await localUser.hover(expiredTempNetworkItem)
+            await waitFor(() => within(expiredTemporaryNetworkNode).getByLabelText("Expired"))
+
+            // advanced past grace period + next reaper interval, so network should be fully deleted
+            act(() => {
+                vi.advanceTimersByTime(GRACE_PERIOD_MS + EXPIRED_NETWORKS_CHECK_INTERVAL_MS + 1)
+            })
+
+            // Network should be deleted now
+            await waitFor(() => expect(useTempNetworksStore.getState().tempNetworks.length).toBe(0))
+
+            // ...and removed from the list
+            expect(screen.queryByText(displayAgentName)).not.toBeInTheDocument()
+
+            // Chat history for the reaped network should also be gone.
+            expect(useAgentChatHistoryStore.getState().history[expectedNetworkName]).toBeUndefined()
+        })
+
+        it("upserts the returned network and re-selects it when a matching reservation is streamed", async () => {
+            mockDesignerStream(JSON.stringify(RESERVATION_CHAT_MESSAGE))
+            renderMultiAgentAccelerator()
+
+            // Select a network so onSaveAgent has a selectedNetwork to copy chat history from.
+            const header = await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY)
+            await user.click(header)
+            await user.click(await screen.findByText(TEST_AGENT_MATH_GUY_DISPLAY))
+
+            await saveAgent()
+
+            const expectedAgentName = `${TEMPORARY_NETWORK_FOLDER}/${RESERVATION.reservation_id}`
+            // The returned reservation was upserted into the temp networks store...
+            expect(useTempNetworksStore.getState().tempNetworks).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({
+                        agentInfo: expect.objectContaining({agent_name: expectedAgentName}),
+                    }),
+                ])
+            )
+            // ...and the newly-saved network became the selected target.
+            await waitFor(() => {
+                expect(chatCommonMock).toHaveBeenCalledWith(
+                    expect.objectContaining({selectedNetwork: expectedAgentName})
+                )
+            })
+        })
+
+        it.each<NetworkDesignerErrorScenario>([
+            {
+                scenario: "the designer returns no reservation",
+                streamChunks: [],
+                agentNetworkName: RESERVATION.reservation_id,
+                expectedLog: "did not return a reservation",
+            },
+            {
+                scenario: "the returned reservation does not match the edited network",
+                streamChunks: [JSON.stringify(RESERVATION_CHAT_MESSAGE)],
+                // agentNetworkName does not match the streamed reservation's derived name → no replacement found.
+                agentNetworkName: "some-other-network",
+                expectedLog: "did not match the current network",
+            },
+        ])(
+            "shows an error and does not upsert when $scenario",
+            async ({streamChunks, agentNetworkName, expectedLog}) => {
+                const debugSpy = vi.spyOn(console, "debug").mockImplementation(vi.fn())
+                mockDesignerStream(...streamChunks)
+                await renderAndWaitForSidebar()
+
+                await saveAgent(agentNetworkName)
+
+                expect(useTempNetworksStore.getState().tempNetworks).toHaveLength(0)
+                expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining(expectedLog))
+            }
+        )
+
+        it("upserts the returned network without navigating when no network is selected", async () => {
+            mockDesignerStream(JSON.stringify(RESERVATION_CHAT_MESSAGE))
+            await renderAndWaitForSidebar()
+
+            await saveAgent()
+
+            expect(useTempNetworksStore.getState().tempNetworks).toHaveLength(1)
+            expect(document.getElementById("multi-agent-accelerator-empty-state")).toBeInTheDocument()
+        })
+
+        it("notifies a save error when the network designer stream throws", async () => {
+            const debugSpy = vi.spyOn(console, "debug").mockImplementation(vi.fn())
+            const errorSpy = vi.spyOn(console, "error").mockImplementation(vi.fn())
+            vi.mocked(sendNetworkDesignerRequest).mockRejectedValue(new Error("stream exploded"))
+            await renderAndWaitForSidebar()
+
+            await saveAgent()
+
+            expect(errorSpy).toHaveBeenCalled()
+            expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining("stream exploded"))
+        })
+
+        it("suppresses the error notification when the save is aborted by the user", async () => {
+            vi.mocked(sendNetworkDesignerRequest).mockRejectedValue(
+                new DOMException("The operation was aborted", "AbortError")
+            )
+            await renderAndWaitForSidebar()
+
+            // No console spies: an AbortError must be swallowed silently (no console.error / notification),
+            // so any logging here would fail the test via jest-fail-on-console.
+            await saveAgent()
+
+            expect(useTempNetworksStore.getState().tempNetworks).toHaveLength(0)
+        })
+    })
+
+    describe("Event Handling", () => {
+        it("should reset conversations onStreamingComplete is called", async () => {
+            renderMultiAgentAccelerator()
+
+            await act(async () => {
+                onStreamingComplete()
+            })
+
+            // Verify conversations were cleared by checking the AgentFlow prop
+            await waitFor(() => {
+                const lastCall = conversationMock.mock.calls[conversationMock.mock.calls.length - 1]
+                expect(lastCall[0]).toBeNull()
+            })
+        })
+
+        it("should handle onEditNetwork request from SideBar", async () => {
+            renderMultiAgentAccelerator()
+
+            await act(async () => {
+                onEditNetwork(TEST_AGENT_MATH_GUY)
+            })
+
+            await waitFor(() => {
+                expect(agentFlowMock).toHaveBeenLastCalledWith(
+                    expect.objectContaining({
+                        isEditingNetwork: true,
+                    })
+                )
+            })
+        })
+    })
+
+    describe("Announcement Handling", () => {
+        it("Should display the Neuro SAN Studio callout on a user's first visit", async () => {
+            const localUser = userEvent.setup({
+                advanceTimers: vi.advanceTimersByTime,
+            })
+
+            vi.useFakeTimers({now: Date.now()})
+            renderMultiAgentAccelerator()
+
+            // Haven't shown announcement yet
+            useAnnouncementsStore.getState().reset(AnnouncementId.NeuroSanStudioGithubStar)
+
+            // Advance time to trigger the callout. Add 1000 to give Slide animation time to complete
+            act(() => {
+                vi.advanceTimersByTime(NEURO_SAN_CALLOUT_DELAY_MS + 1000)
+            })
+
+            // Verify the callout is displayed
+            const title = await screen.findByText(/Star us on GitHub/u)
+            expect(title).toBeVisible()
+
+            const link = title.closest("a")
+
+            expect(link).toBeVisible()
+            expect(link).toHaveAttribute("href", "https://github.com/cognizant-ai-lab/neuro-san-studio")
+
+            // Now dismiss it
+            const closeButton = screen.getByLabelText(/Close Neuro SAN Studio callout/iu)
+
+            expect(closeButton).toBeVisible()
+            await localUser.click(closeButton)
+
+            await waitForElementToBeRemoved(() => screen.queryByText(/Star us on GitHub/u))
+
+            // Should have updated the announcements store to indicate announcement dismissed
+            expect(useAnnouncementsStore.getState().hasShown(AnnouncementId.NeuroSanStudioGithubStar)).toBe(true)
+        })
+    })
+
+    describe("extraSlyData Handling", () => {
+        const agentNetworkDefinition: AgentNetworkDefinitionEntry[] = [
+            {origin: "agent1", tools: [], display_as: "llm_agent", instructions: "Do stuff."},
+        ]
+
+        const tempNetworkWithDefinition: TemporaryNetwork = {
+            ...TEMPORARY_NETWORK,
+            agentNetworkDefinition,
+        }
+
+        const badProvider = "not_a_known_provider"
+
+        type ByokTestCase = {
+            readonly required: ByokKeyField[]
+            readonly expectedMissing: boolean
+        }
+
+        it("is undefined for a permanent network", async () => {
+            renderMultiAgentAccelerator()
+
+            const header = await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY)
+            await user.click(header)
+            const mathGuy = await screen.findByText(TEST_AGENT_MATH_GUY_DISPLAY)
+            await user.click(mathGuy)
+
+            await waitFor(() => {
+                expect(chatCommonMock).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        selectedNetwork: `${TEST_AGENTS_FOLDER}/${TEST_AGENT_MATH_GUY}`,
+                        extraSlyData: undefined,
+                    })
+                )
+            })
+        })
+
+        it("includes definition, name, and hocon for a temporary network", async () => {
+            useTempNetworksStore.setState({tempNetworks: [tempNetworkWithDefinition]})
+
+            renderMultiAgentAccelerator()
+            await screen.findByText("Agent Networks")
+
+            await act(async () => {
+                setSelectedNetwork(TEMPORARY_NETWORK.agentInfo.agent_name)
+            })
+
+            await waitFor(() => {
+                expect(chatCommonMock).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        selectedNetwork: TEMPORARY_NETWORK.agentInfo.agent_name,
+                        extraSlyData: {
+                            [AGENT_NETWORK_DEFINITION_KEY]: agentNetworkDefinition,
+                            [AGENT_NETWORK_NAME_KEY]: TEMPORARY_NETWORK.agentNetworkName,
+                            [AGENT_NETWORK_HOCON]: TEMPORARY_NETWORK.networkHocon,
+                        },
+                    })
+                )
+            })
+        })
+
+        it("includes only agent_network_definition for Agent Network Designer from matching temp network", async () => {
+            useTempNetworksStore.setState({tempNetworks: [tempNetworkWithDefinition]})
+
+            // Seed the designer's sly_data in IndexedDB so the component can resolve the matching temp network
+            useAgentChatHistoryStore.setState({
+                history: {
+                    [AGENT_NETWORK_DESIGNER_ID]: {
+                        chatHistory: [],
+                        chatContext: {},
+                        slyData: {[AGENT_NETWORK_NAME_KEY]: TEMPORARY_NETWORK.agentNetworkName},
+                    },
+                },
+            })
+
+            renderMultiAgentAccelerator()
+            await screen.findByText("Agent Networks")
+
+            await act(async () => {
+                setSelectedNetwork(AGENT_NETWORK_DESIGNER_ID)
+            })
+
+            await waitFor(() => {
+                expect(chatCommonMock).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        selectedNetwork: AGENT_NETWORK_DESIGNER_ID,
+                        extraSlyData: {
+                            [AGENT_NETWORK_DEFINITION_KEY]: agentNetworkDefinition,
+                        },
+                    })
+                )
+            })
+        })
+
+        it.each<ByokTestCase>([
+            {required: [LLM_PROVIDER_API_KEY_FIELD["OpenAI"]], expectedMissing: true},
+            {
+                required: [LLM_PROVIDER_API_KEY_FIELD["OpenAI"], LLM_PROVIDER_API_KEY_FIELD["Anthropic"]],
+                expectedMissing: false,
+            },
+            {required: [LLM_PROVIDER_API_KEY_FIELD["Anthropic"]], expectedMissing: false},
+            {required: [LLM_PROVIDER_API_KEY_FIELD["Google"]], expectedMissing: false},
+            {required: [badProvider as ByokKeyField], expectedMissing: false},
+            {required: [], expectedMissing: false},
+            {required: undefined, expectedMissing: false},
+        ])("should handle networks that require BYOK for $required", async ({expectedMissing, required}) => {
+            vi.mocked(getAgentFunction).mockResolvedValue({
+                function: {
+                    sly_data_schema: {
+                        type: "object",
+                        properties: {
+                            llm_config: {
+                                type: "object",
+                                // Create a subkey for each provider in "required".
+                                properties: required
+                                    ? {...Object.fromEntries(required.map((key) => [key, {type: "string"}]))}
+                                    : undefined,
+                            },
+                        },
+                        required: ["llm_config"],
+                    } satisfies z.infer<typeof BYOK>,
+                },
+            } satisfies FunctionResponse)
+
+            // Validate against schema. Mostly just to "test our test".
+            BYOK.parse((await getAgentFunction(null, null, null)).function?.sly_data_schema)
+
+            // Add an existing API key to the store. This represents the key that the user has supplied
+            useSettingsStore.getState().updateSettings({
+                apiKeys: {
+                    Anthropic: {
+                        expiresAt: Number.MAX_SAFE_INTEGER,
+                        value: "anthropic-key",
+                    },
+                },
+            })
+
+            renderMultiAgentAccelerator()
+
+            await act(async () => {
+                setSelectedNetwork(`${TEST_AGENTS_FOLDER}/${TEST_AGENT_MATH_GUY}`)
+            })
+
+            await screen.findByText(`${TEST_AGENTS_FOLDER}/${TEST_AGENT_MATH_GUY}`)
+
+            // Make sure the missingApiKeys set (as passed to the ChatCommon mock) matches what we expect based on
+            // the required keys and the existing keys in the store.
+            expect(chatCommonMock).toHaveBeenCalledWith(
+                expect.objectContaining<Partial<ChatCommonProps>>({
+                    selectedNetwork: `${TEST_AGENTS_FOLDER}/${TEST_AGENT_MATH_GUY}`,
+                    hasMissingApiKeys: expectedMissing,
+                })
+            )
+        })
+
+        it("passes extraSlyData through to AgentFlow when present", async () => {
+            useTempNetworksStore.setState({tempNetworks: [tempNetworkWithDefinition]})
+
+            renderMultiAgentAccelerator()
+            await screen.findByText("Agent Networks")
+
+            await act(async () => {
+                setSelectedNetwork(TEMPORARY_NETWORK.agentInfo.agent_name)
+            })
+
+            await waitFor(() => {
+                expect(agentFlowMock).toHaveBeenCalledWith(
+                    expect.objectContaining<Partial<AgentFlowProps>>({
+                        isTemporaryNetwork: true,
+                        networkId: TEMPORARY_NETWORK.agentInfo.agent_name,
+                        extraSlyData: {
+                            [AGENT_NETWORK_DEFINITION_KEY]: agentNetworkDefinition,
+                            [AGENT_NETWORK_NAME_KEY]: TEMPORARY_NETWORK.agentNetworkName,
+                            [AGENT_NETWORK_HOCON]: TEMPORARY_NETWORK.networkHocon,
+                        },
+                    })
+                )
+            })
+        })
+
+        it("passes extraSlyData through when saving via streamNetworkDesignerUpsert", async () => {
+            const updatedDefinition: AgentNetworkDefinitionEntry[] = [{origin: "copy_cat", tools: []}]
+
+            const expectedExtraSlyData = {
+                [AGENT_NETWORK_DEFINITION_KEY]: agentNetworkDefinition,
+                [AGENT_NETWORK_NAME_KEY]: TEMPORARY_NETWORK.agentNetworkName,
+                [AGENT_NETWORK_HOCON]: TEMPORARY_NETWORK.networkHocon,
+            }
+
+            useTempNetworksStore.setState({tempNetworks: [tempNetworkWithDefinition]})
+
+            vi.mocked(sendNetworkDesignerRequest).mockImplementation(async (...args: unknown[]) => {
+                const onChunk = args[6] as (chunk: string) => void
+                onChunk(JSON.stringify(RESERVATION_CHAT_MESSAGE))
+            })
+
+            renderMultiAgentAccelerator()
+            await screen.findByText("Agent Networks")
+
+            await act(async () => {
+                setSelectedNetwork(TEMPORARY_NETWORK.agentInfo.agent_name)
+            })
+
+            // Wait until AgentFlow has the updated onSaveAgent closure with extraSlyData in scope.
+            await waitFor(() => {
+                expect(agentFlowMock).toHaveBeenCalledWith(
+                    expect.objectContaining<Partial<AgentFlowProps>>({
+                        extraSlyData: expectedExtraSlyData,
+                    })
+                )
+            })
+
+            await act(async () => {
+                await onSaveAgent(
+                    "copy_cat",
+                    updatedDefinition,
+                    RESERVATION.reservation_id,
+                    new AbortController().signal
+                )
+            })
+
+            expect(sendNetworkDesignerRequest).toHaveBeenCalledWith(
+                NEURO_SAN_SERVER_URL,
+                expect.any(AbortSignal),
+                "copy_cat",
+                updatedDefinition,
+                RESERVATION.reservation_id,
+                MOCK_USER,
+                expect.any(Function),
+                expectedExtraSlyData
+            )
+        })
+
+        it("passes the network's sly_data_schema through to the chat", async () => {
+            const schema = {
+                properties: {x: {description: "The first operand", type: "float"}},
+                required: ["x"],
+                type: "object",
+            }
+            vi.mocked(getAgentFunction).mockResolvedValue({
+                function: {sly_data_schema: schema},
+            } satisfies FunctionResponse)
+
+            renderMultiAgentAccelerator()
+
+            await act(async () => {
+                setSelectedNetwork(`${TEST_AGENTS_FOLDER}/${TEST_AGENT_MATH_GUY}`)
+            })
+
+            await screen.findByText(`${TEST_AGENTS_FOLDER}/${TEST_AGENT_MATH_GUY}`)
+
+            expect(chatCommonMock).toHaveBeenCalledWith(
+                expect.objectContaining<Partial<ChatCommonProps>>({
+                    selectedNetwork: `${TEST_AGENTS_FOLDER}/${TEST_AGENT_MATH_GUY}`,
+                    slyDataSchema: schema,
+                })
+            )
+        })
+
+        it("handles missing agent name in current temp network", async () => {
+            useTempNetworksStore.setState({
+                tempNetworks: [
+                    {
+                        ...tempNetworkWithDefinition,
+                        agentNetworkName: undefined,
+                    },
+                ],
+            })
+
+            renderMultiAgentAccelerator()
+            await screen.findByText("Agent Networks")
+
+            await act(async () => {
+                setSelectedNetwork(TEMPORARY_NETWORK.agentInfo.agent_name)
+            })
+
+            await waitFor(() => {
+                expect(chatCommonMock).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        selectedNetwork: TEMPORARY_NETWORK.agentInfo.agent_name,
+                        extraSlyData: {
+                            [AGENT_NETWORK_DEFINITION_KEY]: agentNetworkDefinition,
+                            [AGENT_NETWORK_HOCON]: TEMPORARY_NETWORK.networkHocon,
+                        },
+                    })
+                )
+            })
+        })
+
+        it("handles an error when fetching agent function", async () => {
+            vi.spyOn(console, "warn").mockImplementation(vi.fn())
+            vi.mocked(getAgentFunction).mockRejectedValue(new Error("Failed to fetch agent function"))
+            renderMultiAgentAccelerator()
+
+            // Search for something known to make sure rendering settled
+            await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY)
+            await act(async () => {
+                setSelectedNetwork(`${TEST_AGENTS_FOLDER}/${TEST_AGENT_MATH_GUY}`)
+            })
+
+            expect(console.warn).toHaveBeenCalledWith(
+                expect.stringContaining(`${TEST_AGENTS_FOLDER}/${TEST_AGENT_MATH_GUY}`),
+                expect.any(Error)
+            )
+        })
+    })
+
+    describe("Tour", () => {
+        type TourScenario = {
+            readonly buttonName: string
+            readonly shouldStartTour: boolean
+            readonly expectedStatus: TourPromptState
+        }
+
+        it("should run the tour when requested and successfully visit each step", async () => {
+            renderMultiAgentAccelerator()
+
+            await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY)
+
+            // Dispatch the tour request
+            await act(async () => {
+                window.dispatchEvent(new Event(TRIGGER_APP_TOUR_EVENT_NAME))
+            })
+
+            // Click to expand the folder in UI hierarchy
+            const header = await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY)
+            await user.click(header)
+
+            // Verify that 'test-agents/math-guy' was successfully primed and rendered
+            await screen.findByText(TEST_AGENT_MATH_GUY_DISPLAY)
+
+            // Make sure we see the tour first step
+            await screen.findByText(tourStepText(MAIN_TOUR_STEPS[0].content))
+
+            // Click through remaining steps and verify their content shows up
+            for (const step of MAIN_TOUR_STEPS.slice(1)) {
+                // Make sure step at least appears in the DOM, though due to mocks we may get false negatives here
+                // Steps can (in theory) be functions that return an element, or just an element
+                const stepElement = typeof step.target === "function" ? step.target() : step.target
+                expect(stepElement).toBeVisible()
+                const nextButton = await screen.findByRole("button", {name: /Next \(\d+ of \d+\)|End Tour/u})
+                await user.click(nextButton)
+                await screen.findByText(tourStepText(step.content))
+            }
+        }, 10_000)
+
+        it("should start the tour once the networks have loaded when startTour is set", async () => {
+            // e.g. Help > Take a tour clicked on the User Guide page, which navigates here with ?tour=true
+            renderMultiAgentAccelerator({startTour: true})
+
+            await screen.findByText(tourStepText(MAIN_TOUR_STEPS[0].content))
+            expect(useTourStore.getState().status).toEqual(TourPromptState.Taken)
+        })
+
+        it("should start the tour when startTour is only set after the first render", async () => {
+            // On a direct load of ?tour=true, the router fills in the query after the page first renders
+            const {rerender} = renderMultiAgentAccelerator()
+            await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY)
+
+            rerender(
+                <SnackbarProvider>
+                    <MultiAgentAccelerator
+                        defaultNeuroSanUrl={NEURO_SAN_SERVER_URL}
+                        startTour={true}
+                        username={MOCK_USER}
+                    />
+                </SnackbarProvider>
+            )
+
+            await screen.findByText(tourStepText(MAIN_TOUR_STEPS[0].content))
+        })
+
+        it("should dismiss the tour prompt when the dialog is closed", async () => {
+            vi.useFakeTimers()
+            const localUser = userEvent.setup({advanceTimers: vi.advanceTimersByTime})
+            renderMultiAgentAccelerator()
+            await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY)
+
+            act(() => {
+                vi.advanceTimersByTime(SHOW_TOUR_DELAY_MS + 1)
+            })
+            await screen.findByRole("dialog")
+
+            await localUser.keyboard("{Escape}")
+
+            expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+        })
+
+        it("should not re-select a network when the tour is requested with one already selected", async () => {
+            renderMultiAgentAccelerator()
+            await user.click(await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY))
+            await user.click(await screen.findByText(TEST_AGENT_MATH_GUY_DISPLAY))
+
+            await act(async () => {
+                window.dispatchEvent(new Event(TRIGGER_APP_TOUR_EVENT_NAME))
+            })
+
+            await screen.findByText(tourStepText(MAIN_TOUR_STEPS[0].content))
+        })
+
+        it("should start the tour from the prompt when a network is already selected", async () => {
+            vi.useFakeTimers()
+            const localUser = userEvent.setup({advanceTimers: vi.advanceTimersByTime})
+            renderMultiAgentAccelerator()
+            await localUser.click(await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY))
+            await localUser.click(await screen.findByText(TEST_AGENT_MATH_GUY_DISPLAY))
+
+            act(() => {
+                vi.advanceTimersByTime(SHOW_TOUR_DELAY_MS + 1)
+            })
+            await localUser.click(screen.getByRole("button", {name: "Take the tour"}))
+            act(() => {
+                vi.advanceTimersByTime(100)
+            })
+
+            await screen.findByText(tourStepText(MAIN_TOUR_STEPS[0].content))
+        })
+
+        it.each<TourScenario>([
+            {
+                buttonName: "Take the tour",
+                shouldStartTour: true,
+                expectedStatus: TourPromptState.Taken,
+            },
+            {
+                buttonName: "Not now",
+                shouldStartTour: false,
+                expectedStatus: TourPromptState.NotPrompted,
+            },
+            {
+                buttonName: "Don't show this again",
+                shouldStartTour: false,
+                expectedStatus: TourPromptState.DontShowAgain,
+            },
+        ])(
+            "Should handle responding '$buttonName' to the tour prompt correctly",
+            async ({buttonName, shouldStartTour, expectedStatus}) => {
+                vi.useFakeTimers()
+
+                const localUser = userEvent.setup({
+                    advanceTimers: vi.advanceTimersByTime,
+                })
+
+                renderMultiAgentAccelerator()
+
+                // Let initial fetch/useEffect work settle. Note: vi.waitFor() here, not RTL waitFor(), since the
+                // vitest version is "fake timers aware"
+                await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY)
+
+                // Advance timers to trigger the tour prompt modal
+                act(() => {
+                    vi.advanceTimersByTime(SHOW_TOUR_DELAY_MS + 1)
+                })
+
+                // Locate and click the target response button
+                const actionButton = screen.getByRole("button", {name: buttonName})
+
+                await localUser.click(actionButton)
+
+                if (shouldStartTour) {
+                    act(() => {
+                        vi.advanceTimersByTime(100)
+                    })
+
+                    // Positive Case: Wait until the introductory tour step text mounts in the DOM
+                    await screen.findByText(tourStepText(MAIN_TOUR_STEPS[0].content))
+                } else {
+                    // Negative Case: Safely wait until the prompt dialog counts hit 0
+                    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+
+                    // Give joyride time to launch the tour, if it's planning to
+                    act(() => {
+                        vi.advanceTimersByTime(100)
+                    })
+
+                    // Assert that the first step text remains completely absent from the DOM layout
+                    expect(screen.queryByText(tourStepText(MAIN_TOUR_STEPS[0].content))).not.toBeInTheDocument()
+                }
+
+                // Verify that the global state store matches the expected final state
+                expect(useTourStore.getState().status).toEqual(expectedStatus)
+            }
+        )
+    })
+})

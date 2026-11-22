@@ -1,0 +1,9 @@
+{
+  "llm_config": {
+    "class": "openai",
+    "model_name": "local-qwen",
+    "openai_api_base": "http://127.0.0.1:45185/v1",
+    "use_responses_api": false,
+    "openai_api_key": "local-placeholder"
+  }
+}

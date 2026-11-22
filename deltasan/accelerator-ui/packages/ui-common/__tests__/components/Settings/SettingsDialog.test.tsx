@@ -1,0 +1,1162 @@
+import {createTheme, PaletteMode, ThemeProvider} from "@mui/material/styles"
+import {act, fireEvent, render, screen, waitFor, within} from "@testing-library/react"
+import {userEvent, UserEvent} from "@testing-library/user-event"
+import httpStatus from "http-status"
+
+import {withStrictMocks} from "../../../../../__tests__/common/strictMocks"
+import {mockFetch} from "../../../../../__tests__/common/TestUtils"
+import {NotificationType, sendNotification} from "../../../components/Common/notification"
+import {PUBLISH_SERVER_HOST_LABEL} from "../../../components/Settings/PublishSettings"
+import {SettingsDialog} from "../../../components/Settings/SettingsDialog"
+import {BrandingSuggestions} from "../../../controller/Types/Branding"
+import {useEnvironmentStore} from "../../../state/Environment"
+import {DEFAULT_SETTINGS, getApiKey, LogoSource, useSettingsStore} from "../../../state/Settings"
+import {PALETTES} from "../../../Theme/Palettes"
+
+// Mock notification system
+vi.mock("../../../components/Common/notification")
+vi.mock("../../../controller/publish/Publish")
+
+// Fading checkmark behavior is covered by FadingCheckmark.test.tsx.
+vi.mock("../../../components/Settings/FadingCheckmark", () => ({
+    FadingCheckmark: (): null => null,
+    useCheckmarkFade: () => ({show: false, trigger: vi.fn()}),
+}))
+
+const TEST_API_KEY = "test-api-key-123"
+
+// Pseudo expiration time
+const NEVER = Number.MAX_SAFE_INTEGER
+
+const BRANDING_SUGGESTIONS_RESPONSE: BrandingSuggestions = {
+    background: "#AA0022",
+    iconSuggestion: "Add",
+    nodeColor: "#445566",
+    plasma: "#112233",
+    primary: "#778899",
+    // Generate a palette of 10 colors for testing
+    rangePalette: Array.from({length: 10}, (_, i) => `#${i.toString(16).padStart(6, "0")}`),
+    secondary: "#AA0011",
+}
+
+describe("SettingsDialog", () => {
+    withStrictMocks()
+
+    let user: UserEvent
+    let originalFetch: typeof global.fetch
+
+    beforeEach(() => {
+        useSettingsStore.getState().resetSettings()
+        useSettingsStore.persist.clearStorage()
+        useEnvironmentStore.getState().setBackendNeuroSanApiUrl(undefined)
+
+        user = userEvent.setup({delay: null})
+        originalFetch = global.fetch
+    })
+
+    afterEach(() => {
+        global.fetch = originalFetch
+    })
+
+    const enterCustomerName = async (customerName: string, shouldClickApply: boolean = true) => {
+        const customerInput = screen.getByPlaceholderText(/Company or organization name/u)
+        await user.clear(customerInput)
+        await user.paste(customerName)
+
+        if (shouldClickApply) {
+            // Click "Apply" if requested
+            const applyButton = screen.getByRole("button", {name: /Apply/u})
+            await user.click(applyButton)
+        }
+    }
+
+    const mockBrandingResult = () => {
+        global.fetch = mockFetch(BRANDING_SUGGESTIONS_RESPONSE)
+    }
+
+    it("renders the SettingsDialog with default props", async () => {
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+            />
+        )
+        await screen.findByText("Settings")
+    })
+
+    it("ignores branding text colors so the dialog stays readable", async () => {
+        const brandedTheme = createTheme({
+            colorSchemes: {dark: {palette: {text: {primary: "#010101"}}}},
+            cssVariables: true,
+            defaultColorScheme: "dark",
+        })
+        render(
+            <ThemeProvider theme={brandedTheme}>
+                <SettingsDialog
+                    id="settings-dialog"
+                    isOpen={true}
+                />
+            </ThemeProvider>
+        )
+        const dialog = await screen.findByTestId("settings-dialog")
+        expect(getComputedStyle(dialog).getPropertyValue("--mui-palette-text-primary")).toBe("#F2F0FF")
+    })
+
+    it("handles nullish logoSource", async () => {
+        useSettingsStore.getState().updateSettings({
+            branding: {
+                logoSource: null,
+            },
+        })
+
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+            />
+        )
+
+        // Should render without crashing and show the "(None)" option as selected by default
+        const logoOptionsContainer = screen.getByRole("group", {name: "logo-selection"})
+        const noneButton = within(logoOptionsContainer).getByRole("button", {name: /None/u})
+        expect(noneButton).toHaveAttribute("aria-pressed", "true")
+    })
+
+    it("triggers onClose when the dialog is closed", async () => {
+        const onCloseMock = vi.fn()
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+                onClose={onCloseMock}
+            />
+        )
+
+        const closeButton = await screen.findByLabelText("close")
+        await user.click(closeButton)
+        expect(onCloseMock).toHaveBeenCalledTimes(1)
+    })
+
+    it("renders a section nav that scrolls to each section", async () => {
+        const originalScrollIntoView = window.HTMLElement.prototype.scrollIntoView
+        window.HTMLElement.prototype.scrollIntoView = vi.fn()
+
+        try {
+            render(
+                <SettingsDialog
+                    id="settings-dialog"
+                    isOpen={true}
+                />
+            )
+
+            const nav = await screen.findByRole("navigation", {name: "Settings sections"})
+            const navButtons = within(nav).getAllByRole("button")
+            const sectionNames = ["External Services", "API Keys", "Behavior", "Appearance"]
+            expect(navButtons.map((button) => button.textContent)).toEqual(sectionNames)
+            expect(navButtons[0]).toHaveAttribute("aria-current", "location")
+
+            // Each nav item has a matching section region containing the section heading
+            sectionNames.forEach((sectionName) => {
+                const region = screen.getByRole("region", {name: sectionName})
+                expect(within(region).getByRole("heading", {name: sectionName})).toBeInTheDocument()
+            })
+
+            await user.click(within(nav).getByRole("button", {name: "Appearance"}))
+            expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalledTimes(1)
+            expect(vi.mocked(window.HTMLElement.prototype.scrollIntoView).mock.contexts[0]).toBe(
+                screen.getByRole("region", {name: "Appearance"})
+            )
+            expect(within(nav).getByRole("button", {name: "Appearance"})).toHaveAttribute("aria-current", "location")
+        } finally {
+            window.HTMLElement.prototype.scrollIntoView = originalScrollIntoView
+        }
+    })
+
+    describe("External services", () => {
+        it("allows user to input, test and save a Neuro SAN URL", async () => {
+            render(
+                <SettingsDialog
+                    id="settings-dialog"
+                    isOpen={true}
+                />
+            )
+
+            const urlInput = screen.getByTestId("settings-dialog-neuro-san-server-url-row")
+
+            const inputBox = within(urlInput).getByPlaceholderText("example.com:1234")
+
+            const testUrl = "https://neuro-san.example.com"
+            await user.click(inputBox)
+            await user.paste(testUrl)
+
+            // Click "clear input" button
+            const clearButton = within(urlInput).getByLabelText("Clear input")
+            await user.click(clearButton)
+            expect(inputBox).toHaveValue("")
+
+            // Status light should be back to "unknown" (gray) after clearing the input
+            const statusLight = within(urlInput).getByTestId("settings-dialog-status-light")
+            expect(statusLight).toHaveAttribute("data-status", "unknown")
+
+            // Set fetch to fail
+            global.fetch = mockFetch({}, false)
+
+            // Click "Test" button to (pretend) "test" the URL
+            await user.click(inputBox)
+            await user.paste(testUrl)
+            const testButton = within(urlInput).getByRole("button", {name: /Test/u})
+            expect(testButton).toBeEnabled()
+            await user.click(testButton)
+
+            expect(statusLight).toHaveAttribute("data-status", "red")
+
+            // Set fetch to succeed
+            global.fetch = mockFetch(
+                {
+                    success: false,
+                    httpStatus: httpStatus.OK,
+                    status: "ok",
+                },
+                true
+            )
+            await user.click(testButton)
+
+            expect(statusLight).toHaveAttribute("data-status", "green")
+
+            // Click "Save" to save the URL
+            const saveButton = within(urlInput).getByRole("button", {name: /Save/u})
+            expect(saveButton).toBeEnabled()
+            await user.click(saveButton)
+
+            expect(useSettingsStore.getState().settings.externalServices.neuroSanUrl).toBe(testUrl)
+        }, 10_000)
+
+        it("handles input URLs with http and https protocols correctly", async () => {
+            render(
+                <SettingsDialog
+                    id="settings-dialog"
+                    isOpen={true}
+                />
+            )
+
+            const urlInput = screen.getByTestId("settings-dialog-neuro-san-server-url-row")
+
+            const inputBox = within(urlInput).getByPlaceholderText("example.com:1234")
+
+            // Paste an http protocol URL in the input
+            await user.click(inputBox)
+            await user.paste("http://neuro-san.example.com")
+
+            // Move out of the input to trigger onBlur
+            await user.tab()
+
+            // The protocol should have been stripped and the dropdown changed to http
+            expect(inputBox).toHaveValue("neuro-san.example.com")
+            const protocolDropdown = within(urlInput).getByRole("combobox", {name: "protocol-select"})
+            expect(protocolDropdown).toHaveTextContent("http")
+
+            // Now type an https protocol URL in the input
+            await user.clear(inputBox)
+            await user.click(inputBox)
+            await user.paste("https://neuro-san.example.com")
+
+            // Move out of the input to trigger onBlur
+            await user.tab()
+
+            // The protocol should have been stripped and the dropdown changed to https
+            expect(inputBox).toHaveValue("neuro-san.example.com")
+            expect(protocolDropdown).toHaveTextContent(/^https:\/\/$/u)
+        })
+
+        it("handles user changing protocol in dropdown correctly", async () => {
+            render(
+                <SettingsDialog
+                    id="settings-dialog"
+                    isOpen={true}
+                />
+            )
+
+            const urlInput = screen.getByTestId("settings-dialog-neuro-san-server-url-row")
+
+            const protocolDropdown = within(urlInput).getByRole("combobox", {name: "protocol-select"})
+
+            // Should default to https
+            expect(protocolDropdown).toHaveTextContent("https")
+
+            // Enter a URL
+            const inputBox = within(urlInput).getByPlaceholderText("example.com:1234")
+            const testUrl = "neuro-san.example.com"
+            await user.click(inputBox)
+            await user.paste(testUrl)
+
+            // Make sure it gets saved correctly
+            const saveButton = within(urlInput).getByRole("button", {name: "Save"})
+            expect(saveButton).toBeEnabled()
+            await user.click(saveButton)
+
+            expect(useSettingsStore.getState().settings.externalServices.neuroSanUrl).toBe(`https://${testUrl}`)
+
+            // Now change the protocol to http
+            await user.click(protocolDropdown)
+
+            const httpOption = await screen.findByRole("option", {name: "http://"})
+            await user.click(httpOption)
+
+            // Save again — protocol-only change should enable Save
+            expect(saveButton).toBeEnabled()
+            await user.click(saveButton)
+
+            // the "a" should also be saved
+            expect(useSettingsStore.getState().settings.externalServices.neuroSanUrl).toBe(`http://${testUrl}`)
+        })
+
+        it.each(["default-neuro-san.example.com", ""])(
+            "handles resetting the Neuro SAN URL to the default",
+            async (defaultNeuroSanUrl) => {
+                useEnvironmentStore.getState().setBackendNeuroSanApiUrl(`https://${defaultNeuroSanUrl}`)
+
+                render(
+                    <SettingsDialog
+                        id="settings-dialog"
+                        isOpen={true}
+                    />
+                )
+
+                const urlInput = screen.getByTestId("settings-dialog-neuro-san-server-url-row")
+                const inputBox = within(urlInput).getByPlaceholderText("example.com:1234")
+
+                // Paste an http protocol URL in the input
+                await user.click(inputBox)
+                await user.paste("http://neuro-san.example.com")
+
+                const resetButton = within(urlInput).getByRole("button", {name: "Default"})
+                await user.click(resetButton)
+
+                // The input should be cleared and the protocol dropdown should be reset to https
+                expect(inputBox).toHaveValue(defaultNeuroSanUrl)
+                const protocolDropdown = within(urlInput).getByRole("combobox", {name: "protocol-select"})
+                expect(protocolDropdown).toHaveTextContent("https")
+            }
+        )
+    })
+
+    describe("API keys", () => {
+        it.each(["dark", "light"] satisfies PaletteMode[])("allows user to input and save API keys", async (mode) => {
+            global.fetch = mockFetch({}, true)
+
+            render(
+                <ThemeProvider theme={createTheme({palette: {mode}})}>
+                    <SettingsDialog
+                        id="settings-dialog"
+                        isOpen={true}
+                    />
+                </ThemeProvider>
+            )
+
+            const apiKeyInput = screen.getByTestId("settings-dialog-openai-input")
+
+            const inputBox = within(apiKeyInput).getByPlaceholderText("sk-...")
+            const testApiKey = TEST_API_KEY
+
+            await user.click(inputBox)
+            await user.paste(testApiKey)
+
+            // Click "Test" button to (pretend) "test" the key
+            const testButton = within(apiKeyInput).getByRole("button", {name: "Test"})
+            expect(testButton).toBeEnabled()
+            await user.click(testButton)
+
+            // Click "Save" to save the API key
+            const saveButton = await within(apiKeyInput).findByRole("button", {name: "Save"})
+            expect(saveButton).toBeEnabled()
+
+            await user.click(saveButton)
+
+            expect(getApiKey(useSettingsStore.getState().settings.apiKeys, "OpenAI")).toBe(testApiKey)
+        })
+
+        it("allows user to test API keys", async () => {
+            global.fetch = mockFetch({}, true)
+
+            render(
+                <SettingsDialog
+                    id="settings-dialog"
+                    isOpen={true}
+                />
+            )
+
+            const apiKeyInput = screen.getByTestId("settings-dialog-openai-input")
+
+            const inputBox = within(apiKeyInput).getByPlaceholderText("sk-...")
+
+            await user.click(inputBox)
+            await user.paste(TEST_API_KEY)
+
+            // Make sure we can clear the input
+            const clearButton = within(apiKeyInput).getByLabelText("Clear input")
+            await user.click(clearButton)
+            expect(inputBox).toHaveValue("")
+
+            // Type the key again for testing
+            await user.click(inputBox)
+            await user.paste(TEST_API_KEY)
+
+            // Click "Test" button to (pretend) "test" the key
+            const testButton = within(apiKeyInput).getByRole("button", {name: "Test"})
+            expect(testButton).toBeEnabled()
+            await user.click(testButton)
+
+            // Make sure status light is green
+            const statusLight = within(apiKeyInput).getByTestId("settings-dialog-openai-status-light")
+            expect(statusLight).toHaveAttribute("data-status", "green")
+
+            // Now mock test failure and check that error icon appears
+            global.fetch = mockFetch({}, false)
+            await user.click(testButton)
+
+            // Now status light should be red
+            expect(statusLight).toHaveAttribute("data-status", "red")
+        })
+
+        it("surfaces a failed key test in the aggregated error banner", async () => {
+            global.fetch = mockFetch(
+                {
+                    type: "error",
+                    error: {type: "authentication_error", message: "invalid x-api-key"},
+                },
+                false,
+                httpStatus.UNAUTHORIZED
+            )
+
+            render(
+                <SettingsDialog
+                    id="settings-dialog"
+                    isOpen={true}
+                />
+            )
+
+            const apiKeyInput = screen.getByTestId("settings-dialog-anthropic-input")
+            const inputBox = within(apiKeyInput).getByPlaceholderText("sk-ant-...")
+
+            await user.click(inputBox)
+            await user.paste(TEST_API_KEY)
+            await user.click(within(apiKeyInput).getByRole("button", {name: "Test"}))
+
+            const banner = await screen.findByRole("alert")
+            expect(
+                within(banner).getByText(
+                    `Anthropic — ${httpStatus[httpStatus.UNAUTHORIZED]} (${httpStatus.UNAUTHORIZED})`
+                )
+            ).toBeInTheDocument()
+            expect(within(banner).getByText("invalid x-api-key")).toBeInTheDocument()
+
+            // Editing the key clears the failure from the banner
+            await user.click(inputBox)
+            await user.paste("more")
+            expect(screen.queryByRole("alert")).not.toBeInTheDocument()
+        })
+
+        it("allows user to request that API keys be forgotten", async () => {
+            // set an existing key value
+            useSettingsStore.getState().updateSettings({
+                apiKeys: {
+                    OpenAI: {
+                        expiresAt: NEVER,
+                        value: TEST_API_KEY,
+                    },
+                },
+            })
+
+            render(
+                <SettingsDialog
+                    id="settings-dialog"
+                    isOpen={true}
+                />
+            )
+
+            const apiKeyInput = screen.getByTestId("settings-dialog-openai-input")
+
+            const forgetButton = within(apiKeyInput).getByRole("button", {name: "Forget"})
+            await user.click(forgetButton)
+
+            // First time, cancel
+            const cancelButton = await screen.findByText("Cancel")
+            await user.click(cancelButton)
+
+            // Key should still be there
+            expect(getApiKey(useSettingsStore.getState().settings.apiKeys, "OpenAI")).toBe(TEST_API_KEY)
+
+            // Now click it again but this time confirm
+            await user.click(forgetButton)
+
+            const confirmButton = screen.getByText("Yes, forget key")
+            await user.click(confirmButton)
+
+            expect(getApiKey(useSettingsStore.getState().settings.apiKeys, "OpenAI")).toBeFalsy()
+        })
+
+        it("allows a user to show/hide keys", async () => {
+            // set an existing key value
+            useSettingsStore.getState().updateSettings({
+                apiKeys: {
+                    OpenAI: {
+                        expiresAt: NEVER,
+                        value: TEST_API_KEY,
+                    },
+                },
+            })
+
+            render(
+                <SettingsDialog
+                    id="settings-dialog"
+                    isOpen={true}
+                />
+            )
+
+            const apiKeyContainer = screen.getByTestId("settings-dialog-openai-input")
+            const input = within(apiKeyContainer).getByPlaceholderText("sk-...")
+
+            // Assert initial state: masked
+            expect(input).toHaveAttribute("type", "password")
+            expect(input).toHaveValue(TEST_API_KEY)
+
+            // Click the toggle button
+            const showHideButton = within(apiKeyContainer).getByRole("button", {name: "toggle key visibility"})
+            await user.click(showHideButton)
+
+            // Now should be unmasked (regular text control)
+            expect(input).toHaveAttribute("type", "text")
+            expect(input).toHaveValue(TEST_API_KEY)
+
+            // Assert the Tooltip change
+            expect(screen.getByLabelText("Hide API key")).toBeInTheDocument()
+        })
+
+        it("shows unsaved changes modal when closing with unsaved API key changes", async () => {
+            const onCloseMock = vi.fn()
+            render(
+                <SettingsDialog
+                    id="settings-dialog"
+                    isOpen={true}
+                    onClose={onCloseMock}
+                />
+            )
+
+            const apiKeyInput = screen.getByTestId("settings-dialog-openai-input")
+            const inputBox = within(apiKeyInput).getByPlaceholderText("sk-...")
+
+            await user.click(inputBox)
+            await user.paste(TEST_API_KEY)
+
+            const closeButton = await screen.findByLabelText("close")
+            await user.click(closeButton)
+
+            expect(onCloseMock).not.toHaveBeenCalled()
+            expect(screen.getByText("Unsaved Changes")).toBeInTheDocument()
+            expect(
+                screen.getByText("You have unsaved edits. Would you like to save your changes, or discard them?")
+            ).toBeInTheDocument()
+        })
+
+        it("discards unsaved API key changes and closes dialog when Discard changes is clicked", async () => {
+            const onCloseMock = vi.fn()
+            render(
+                <SettingsDialog
+                    id="settings-dialog"
+                    isOpen={true}
+                    onClose={onCloseMock}
+                />
+            )
+
+            const apiKeyInput = screen.getByTestId("settings-dialog-openai-input")
+            const inputBox = within(apiKeyInput).getByPlaceholderText("sk-...")
+
+            await user.click(inputBox)
+            await user.paste(TEST_API_KEY)
+
+            const closeButton = await screen.findByLabelText("close")
+            await user.click(closeButton)
+
+            const discardButton = screen.getByRole("button", {name: "Discard changes"})
+            await user.click(discardButton)
+
+            expect(onCloseMock).toHaveBeenCalledTimes(1)
+            expect(getApiKey(useSettingsStore.getState().settings.apiKeys, "OpenAI")).toBeFalsy()
+        })
+
+        it("saves unsaved API key changes and closes dialog when Save changes is clicked", async () => {
+            global.fetch = mockFetch({}, true)
+            const onCloseMock = vi.fn()
+            render(
+                <SettingsDialog
+                    id="settings-dialog"
+                    isOpen={true}
+                    onClose={onCloseMock}
+                />
+            )
+
+            const apiKeyInput = screen.getByTestId("settings-dialog-openai-input")
+            const inputBox = within(apiKeyInput).getByPlaceholderText("sk-...")
+
+            await user.click(inputBox)
+            await user.paste(TEST_API_KEY)
+
+            const closeButton = await screen.findByLabelText("close")
+            await user.click(closeButton)
+
+            const saveChangesButton = screen.getByRole("button", {name: "Save changes"})
+            await user.click(saveChangesButton)
+
+            await waitFor(() => expect(onCloseMock).toHaveBeenCalledTimes(1))
+            expect(getApiKey(useSettingsStore.getState().settings.apiKeys, "OpenAI")).toBe(TEST_API_KEY)
+        })
+    })
+
+    it.each([
+        {
+            label: "plasma-color-picker",
+            color: "#112233",
+            expectedUpdate: {appearance: {plasmaColor: "#112233"}},
+        },
+        {
+            label: "agent-node-color-picker",
+            color: "#445566",
+            expectedUpdate: {appearance: {agentNodeColor: "#445566"}},
+        },
+        {
+            label: "agent-icon-color-picker",
+            color: "#778899",
+            expectedUpdate: {appearance: {agentIconColor: "#778899"}},
+        },
+    ])("updates $label when user selects new color", async ({label, color, expectedUpdate}) => {
+        // Set some non-default values first
+        useSettingsStore.getState().updateSettings({
+            appearance: {
+                plasmaColor: "#000000",
+                agentNodeColor: "#000000",
+                agentIconColor: "#000000",
+            },
+        })
+
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+            />
+        )
+
+        const colorInput = screen.getByLabelText(label)
+
+        // Simulate the onChange event with a new color value.
+        // Can't do this in a more "user-like" way since JSDom doesn't really implement the color-picker input.
+        fireEvent.change(colorInput, {target: {value: color}})
+
+        const appearanceSettings = useSettingsStore.getState().settings.appearance
+        expect(appearanceSettings).toMatchObject(expectedUpdate.appearance)
+    })
+
+    it("Changes palette for depth/heatmap when user selects a new option", async () => {
+        // Set non-default value first
+        useSettingsStore.getState().updateSettings({
+            appearance: {
+                // Assuming the default is not "green"
+                rangePalette: "green",
+            },
+        })
+
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+            />
+        )
+
+        // Find button to select "GrayScale" palette
+        const grayScaleButton = screen.getByRole("button", {name: "grayScale-palette-button"})
+
+        // Click the button to change the palette
+        await user.click(grayScaleButton)
+
+        expect(useSettingsStore.getState().settings.appearance.rangePalette).toBe("grayScale")
+    })
+
+    it("doesn't change palette if user clicks again on the existing option", async () => {
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+            />
+        )
+
+        // Find button to select "GrayScale" palette
+        const grayScaleButton = screen.getByRole("button", {name: "grayScale-palette-button"})
+        await user.click(grayScaleButton)
+        expect(useSettingsStore.getState().settings.appearance.rangePalette).toBe("grayScale")
+
+        // Click the same button again
+        await user.click(grayScaleButton)
+
+        expect(useSettingsStore.getState().settings.appearance.rangePalette).toBe("grayScale")
+    })
+
+    it("Allows selecting and unselecting auto agent icon color", async () => {
+        // Set non-default value first
+        useSettingsStore.getState().updateSettings({
+            appearance: {
+                autoAgentIconColor: false,
+            },
+        })
+
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+            />
+        )
+
+        // Locate the auto color checkbox
+        const autoColorCheckbox = screen.getByTestId("auto-agent-icon-color-button")
+
+        // "auto" button should not be pressed since we set autoAgentIconColor to false
+        expect(autoColorCheckbox).toHaveAttribute("aria-pressed", "false")
+
+        await user.click(autoColorCheckbox)
+
+        // Now should be true
+        expect(useSettingsStore.getState().settings.appearance.autoAgentIconColor).toBe(true)
+
+        // Click it again
+        await user.click(autoColorCheckbox)
+
+        // Should not have changed value
+        expect(useSettingsStore.getState().settings.appearance.autoAgentIconColor).toBe(true)
+    })
+
+    it("Allows toggling Zen mode", async () => {
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+            />
+        )
+
+        // Default: Zen mode should be enabled
+        expect(useSettingsStore.getState().settings.behavior.enableZenMode).toBe(true)
+
+        const zenModeToggle = screen.getByTestId("zen-mode-checkbox")
+
+        const checkboxElement = within(zenModeToggle).getByRole("checkbox")
+
+        expect(checkboxElement).toBeChecked()
+
+        // Click to disable Zen mode
+        await user.click(checkboxElement)
+        expect(checkboxElement).not.toBeChecked()
+
+        expect(useSettingsStore.getState().settings.behavior.enableZenMode).toBe(false)
+    })
+
+    it("Allows toggling native agent names mode", async () => {
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+            />
+        )
+
+        // Default: mode should be disabled (meaning, we show beautified names)
+        expect(useSettingsStore.getState().settings.appearance.useNativeNames).toBe(false)
+
+        // Locate the "beautified" toggle button
+        const beautifyToggle = screen.getByRole("button", {name: "Beautified"})
+        await user.click(beautifyToggle)
+
+        // Should be no change since we're already on beautified mode
+        expect(useSettingsStore.getState().settings.appearance.useNativeNames).toBe(false)
+
+        // Locate the "native" toggle button
+        const toggleButton = screen.getByRole("button", {name: "Native"})
+        await user.click(toggleButton)
+
+        expect(useSettingsStore.getState().settings.appearance.useNativeNames).toBe(true)
+    })
+
+    it("resets settings to default when reset button is confirmed", async () => {
+        // Set some non-default values first
+        useSettingsStore.getState().updateSettings({
+            appearance: {
+                plasmaColor: "#123456",
+                agentNodeColor: "#abcdef",
+            },
+        })
+
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+            />
+        )
+
+        const resetButton = screen.getByRole("button", {name: "Reset to defaults"})
+        await user.click(resetButton)
+
+        const confirmButton = await screen.findByText("Confirm")
+        await user.click(confirmButton)
+
+        // Assert the store was actually reset
+        const settings = useSettingsStore.getState().settings
+        expect(settings.appearance.plasmaColor).toBe(DEFAULT_SETTINGS.appearance.plasmaColor)
+        expect(settings.appearance.agentNodeColor).toBe(DEFAULT_SETTINGS.appearance.agentNodeColor)
+
+        // Check that a success notification was sent
+        expect(sendNotification).toHaveBeenCalledTimes(1)
+        expect(sendNotification).toHaveBeenCalledWith(
+            NotificationType.success,
+            "Settings have been reset to default values."
+        )
+    })
+
+    it.each(["Save", "Test"])("ignores pending %s validation after reset", async (action) => {
+        let resolveRequest: (response: Response) => void
+        global.fetch = vi.fn(
+            () =>
+                new Promise<Response>((resolve) => {
+                    resolveRequest = resolve
+                })
+        )
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+            />
+        )
+        const row = screen.getByTestId("settings-dialog-openai-input")
+        await user.click(within(row).getByPlaceholderText("sk-..."))
+        await user.paste("sk-proj-example")
+        await user.click(within(row).getByRole("button", {name: action}))
+        await user.click(screen.getByRole("button", {name: "Reset to defaults"}))
+        await user.click(await screen.findByRole("button", {name: "Confirm"}))
+        await act(async () => {
+            resolveRequest(
+                action === "Test"
+                    ? Response.json({error: {message: "Discarded key rejected"}}, {status: 401})
+                    : Response.json({})
+            )
+        })
+
+        expect(screen.queryByText("Discarded key rejected")).not.toBeInTheDocument()
+        expect(screen.getByPlaceholderText("sk-...")).toHaveValue("")
+        expect(getApiKey(useSettingsStore.getState().settings.apiKeys, "OpenAI")).toBeFalsy()
+    })
+
+    it("Does not reset settings to default when cancel button clicked", async () => {
+        const plasmaColor = "#123456"
+        const agentNodeColor = "#abcdef"
+
+        // Set some non-default values first
+        useSettingsStore.getState().updateSettings({
+            appearance: {
+                plasmaColor,
+                agentNodeColor,
+            },
+        })
+
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+            />
+        )
+
+        const resetButton = screen.getByRole("button", {name: "Reset to defaults"})
+        await user.click(resetButton)
+
+        const cancelButton = await screen.findByText("Cancel")
+        await user.click(cancelButton)
+
+        // Assert the store was not changed
+        const settingsAfter = useSettingsStore.getState().settings
+        expect(settingsAfter.appearance.plasmaColor).toBe(plasmaColor)
+        expect(settingsAfter.appearance.agentNodeColor).toBe(agentNodeColor)
+    })
+
+    it("applies branding for requested customer", async () => {
+        mockBrandingResult()
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+                logoServiceToken="test-logo-service-token-456"
+            />
+        )
+
+        expect(useSettingsStore.getState().settings.branding.logoSource).toEqual<LogoSource>("none")
+
+        const customerName = "Acme"
+        await enterCustomerName(customerName)
+
+        // Check that the store was updated with the new customer name
+        const brandingSettings = useSettingsStore.getState().settings.branding
+        const appearanceSettings = useSettingsStore.getState().settings.appearance
+
+        expect(brandingSettings.customer).toBe(customerName)
+        expect(appearanceSettings.rangePalette).toBe("brand")
+        expect(appearanceSettings.plasmaColor).toBe(BRANDING_SUGGESTIONS_RESPONSE.plasma)
+        expect(appearanceSettings.agentNodeColor).toBe(BRANDING_SUGGESTIONS_RESPONSE.nodeColor)
+        expect(brandingSettings.primary).toBe(BRANDING_SUGGESTIONS_RESPONSE.primary)
+        expect(brandingSettings.secondary).toBe(BRANDING_SUGGESTIONS_RESPONSE.secondary)
+        expect(brandingSettings.background).toBe(BRANDING_SUGGESTIONS_RESPONSE.background)
+        expect(brandingSettings.rangePalette).toEqual(BRANDING_SUGGESTIONS_RESPONSE.rangePalette)
+        expect(brandingSettings.iconSuggestion).toBe(BRANDING_SUGGESTIONS_RESPONSE.iconSuggestion)
+        expect(brandingSettings.logoSource).toBe("auto")
+    })
+
+    it("applies branding when Enter is pressed", async () => {
+        mockBrandingResult()
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+                logoServiceToken="test-logo-service-token-456"
+            />
+        )
+
+        const customerName = "Acme"
+        await enterCustomerName(customerName, false)
+        await user.keyboard("{Enter}")
+
+        expect(useSettingsStore.getState().settings.branding.customer).toBe(customerName)
+        expect(useSettingsStore.getState().settings.branding.logoSource).toBe("auto")
+    })
+
+    it("changes the logo source for branded customers", async () => {
+        mockBrandingResult()
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+                logoServiceToken="test-logo-service-token-456"
+            />
+        )
+
+        const customerName = "Acme"
+        await enterCustomerName(customerName)
+        const logoOptionsContainer = screen.getByRole("group", {name: "logo-selection"}).closest("span").closest("div")
+
+        const logoNoneButton = within(logoOptionsContainer).getByRole("button", {name: "None"})
+        await user.click(logoNoneButton)
+
+        // Logo source should be set to "none", meaning no logo will be shown even if we have suggestions
+        expect(useSettingsStore.getState().settings.branding.logoSource).toEqual<LogoSource>("none")
+
+        // Click the already-selected button
+        await user.click(logoNoneButton)
+
+        // Should still be "none"
+        expect(useSettingsStore.getState().settings.branding.logoSource).toEqual<LogoSource>("none")
+
+        // Preview should show the "(None)" text indicating no logo will be shown
+        within(logoOptionsContainer).getByText("(None)")
+
+        // Now click "generic"
+        const logoGenericButton = within(logoOptionsContainer).getByRole("button", {name: "Generic"})
+        await user.click(logoGenericButton)
+
+        expect(useSettingsStore.getState().settings.branding.logoSource).toBe("generic")
+
+        // Should show the generic icon suggestion (Add)
+        within(logoOptionsContainer).getByTestId("AddIcon")
+
+        // Now the "auto" option
+        const logoAutoButton = within(logoOptionsContainer).getByRole("button", {name: "Auto"})
+        await user.click(logoAutoButton)
+        expect(useSettingsStore.getState().settings.branding.logoSource).toBe("auto")
+
+        // Should show the logo from logo.dev with the correct URL (we can check for the img element and its src)
+        const logoImg = within(logoOptionsContainer).getByRole("img", {name: `${customerName} Logo`})
+        expect(logoImg).toBeInTheDocument()
+        expect(logoImg).toHaveAttribute(
+            "src",
+            expect.stringContaining(`https://img.logo.dev/name/${encodeURIComponent(customerName)}`)
+        )
+    })
+
+    it("clears branding settings", async () => {
+        mockBrandingResult()
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+                logoServiceToken="test-logo-service-token-456"
+            />
+        )
+
+        await enterCustomerName("Acme")
+
+        const clearBrandingButton = screen.getByRole("button", {name: "Clear"})
+        await user.click(clearBrandingButton)
+
+        // Relevant settings should be back to default values
+        expect(useSettingsStore.getState().settings.branding).toMatchObject(DEFAULT_SETTINGS.branding)
+        expect(useSettingsStore.getState().settings.appearance.rangePalette).toBe(
+            DEFAULT_SETTINGS.appearance.rangePalette
+        )
+    })
+
+    it("Handles missing branding values from server", async () => {
+        global.fetch = mockFetch({
+            // Simulate missing values by returning an empty object
+        })
+
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+            />
+        )
+
+        const customerName = "Acme"
+        await enterCustomerName(customerName)
+
+        // Check that the store was updated with the new customer name
+        const brandingSettings = useSettingsStore.getState().settings.branding
+        const appearanceSettings = useSettingsStore.getState().settings.appearance
+        expect(brandingSettings.customer).toBe(customerName)
+        expect(appearanceSettings.rangePalette).toBe("brand")
+        expect(appearanceSettings.plasmaColor).toBe(DEFAULT_SETTINGS.appearance.plasmaColor)
+        expect(appearanceSettings.agentNodeColor).toBe(DEFAULT_SETTINGS.appearance.agentNodeColor)
+        expect(brandingSettings.primary).toBe(null)
+        expect(brandingSettings.secondary).toBe(null)
+        expect(brandingSettings.background).toBe(null)
+        expect(brandingSettings.rangePalette).toEqual(null)
+    })
+
+    it("Handles exception when retrieving branding suggestions", async () => {
+        const networkError = "Network error"
+        global.fetch = vi.fn().mockRejectedValue(new Error(networkError))
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+            />
+        )
+
+        // Spy on console.warn to suppress output during test
+        const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(vi.fn())
+
+        const customerName = "Acme"
+        await enterCustomerName(customerName)
+
+        expect(consoleErrorSpy).toHaveBeenCalledWith(
+            expect.stringMatching(new RegExp(`Failed to fetch branding suggestions.*"${customerName}"`, "u")),
+            expect.objectContaining({message: networkError})
+        )
+    })
+
+    it("Handles null response when retrieving branding suggestions", async () => {
+        global.fetch = mockFetch(null)
+
+        const customer = "OldCustomer"
+
+        useSettingsStore.getState().updateSettings({
+            branding: {
+                customer,
+            },
+        })
+
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+            />
+        )
+
+        const customerName = "Acme"
+        await enterCustomerName(customerName)
+
+        // Customer name should be unchanged
+        expect(useSettingsStore.getState().settings.branding.customer).toBe(customer)
+    })
+
+    it("Handles customer but no logo token", async () => {
+        global.fetch = mockFetch(BRANDING_SUGGESTIONS_RESPONSE)
+
+        render(
+            <SettingsDialog
+                id="settings-dialog"
+                isOpen={true}
+            />
+        )
+
+        await enterCustomerName("Acme", true)
+
+        const logoOptionsContainer = screen.getByRole("group", {name: "logo-selection"})
+
+        const errorTooltip = within(logoOptionsContainer).getByLabelText(/Cannot use Auto logo source/u)
+
+        // Get span that wraps the button
+        const autoButtonSpan = within(logoOptionsContainer).getByRole("button", {name: "Auto"}).parentElement
+
+        // Hover and make sure we get the tooltip
+        await user.hover(autoButtonSpan)
+        expect(errorTooltip).toBeVisible()
+    })
+
+    describe("additional coverage", () => {
+        const renderDialog = () =>
+            render(
+                <SettingsDialog
+                    id="settings-dialog"
+                    isOpen={true}
+                />
+            )
+
+        it("shows the publish settings when publishing is enabled", async () => {
+            useEnvironmentStore.getState().setEnablePublishing(true)
+            const {unmount} = renderDialog()
+            try {
+                expect((await screen.findAllByText("External Services")).length).toBeGreaterThan(0)
+                expect(screen.getByRole("textbox", {name: PUBLISH_SERVER_HOST_LABEL})).toBeInTheDocument()
+            } finally {
+                unmount()
+                useEnvironmentStore.setState({enablePublishing: undefined})
+            }
+        })
+
+        it("handles a default server URL that uses plain http", async () => {
+            useEnvironmentStore.getState().setBackendNeuroSanApiUrl("http://localhost:8080")
+            renderDialog()
+            expect(await screen.findByDisplayValue("localhost:8080")).toBeInTheDocument()
+        })
+
+        it("does not apply branding when Enter is pressed with a blank customer name", async () => {
+            global.fetch = vi.fn()
+            renderDialog()
+
+            const customerInput = screen.getByPlaceholderText(/Company or organization name/u)
+            await user.click(customerInput)
+            await user.keyboard("{Enter}")
+            await user.keyboard("a{Backspace}{Enter}")
+
+            expect(global.fetch).not.toHaveBeenCalled()
+        })
+
+        it.each(["generic", "auto"] as const)("renders a logo preview for logoSource=%s without customer", (source) => {
+            useSettingsStore.getState().updateSettings({branding: {logoSource: source}})
+            renderDialog()
+            expect(screen.getAllByText("Preview:").length).toBeGreaterThan(0)
+            expect(screen.queryByText("(None)")).not.toBeInTheDocument()
+        })
+
+        it("skips palettes that are not arrays", () => {
+            const palettes = PALETTES as unknown as Record<string, unknown>
+            palettes["bogus"] = null
+            try {
+                renderDialog()
+                expect(screen.queryByRole("button", {name: "bogus-palette-button"})).not.toBeInTheDocument()
+            } finally {
+                delete palettes["bogus"]
+            }
+        })
+    })
+})

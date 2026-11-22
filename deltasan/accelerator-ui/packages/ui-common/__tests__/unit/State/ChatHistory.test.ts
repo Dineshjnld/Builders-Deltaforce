@@ -1,0 +1,241 @@
+// Include mock for IndexedDB
+import "fake-indexeddb/auto"
+
+import {AIMessage, HumanMessage, mapChatMessagesToStoredMessages, SystemMessage} from "@langchain/core/messages"
+
+import {withStrictMocks} from "../../../../../__tests__/common/strictMocks"
+import {ChatContext} from "../../../generated/neuro-san/NeuroSanClient"
+import {MAX_CHAT_HISTORY_ITEMS, useAgentChatHistoryStore} from "../../../state/ChatHistory"
+import {indexedDBStorage} from "../../../state/IndexedDBStorage"
+
+const TEST_MESSAGES = [
+    new AIMessage("AI message"),
+    new HumanMessage("human message"),
+    new SystemMessage("system message"),
+]
+
+describe("ChatHistory", () => {
+    withStrictMocks()
+
+    beforeEach(() => {
+        // Clear the chat history before each test
+        const allHistory = useAgentChatHistoryStore.getState().history
+
+        Object.keys(allHistory).forEach((agentId) => {
+            useAgentChatHistoryStore.getState().resetHistory(agentId)
+        })
+    })
+
+    it("should save and restore chat history messages", async () => {
+        useAgentChatHistoryStore.getState().updateChatHistory("agent1", TEST_MESSAGES)
+
+        const updatedHistory = useAgentChatHistoryStore.getState().history
+        expect(updatedHistory["agent1"]?.chatHistory).toEqual(TEST_MESSAGES)
+    })
+
+    it("Should limit saved chat history to max items", async () => {
+        const messages = Array.from({length: 100}, (_, i) => new HumanMessage(`message ${i}`))
+
+        useAgentChatHistoryStore.getState().updateChatHistory("agent1", messages)
+
+        const updatedHistory = useAgentChatHistoryStore.getState().history
+        expect(updatedHistory["agent1"]?.chatHistory.length).toBeLessThanOrEqual(MAX_CHAT_HISTORY_ITEMS)
+        expect(updatedHistory["agent1"]?.chatHistory[0].text).toBe(`message ${100 - MAX_CHAT_HISTORY_ITEMS}`)
+    })
+
+    it("should handle resetting chat history", async () => {
+        const updateChatHistory = useAgentChatHistoryStore.getState().updateChatHistory
+
+        updateChatHistory("agent2", TEST_MESSAGES)
+
+        useAgentChatHistoryStore.getState().resetHistory("agent2")
+
+        const updatedHistory = useAgentChatHistoryStore.getState().history
+        expect(updatedHistory["agent2"]?.chatHistory).toBeUndefined()
+    })
+
+    it("should handle requests for missing items", async () => {
+        const historyItems = useAgentChatHistoryStore.getState().history
+        expect(historyItems["nonexistent-agent"]).toBeUndefined()
+    })
+
+    it("should save and restore chat context", async () => {
+        const chatContext: ChatContext = {
+            chat_histories: [
+                {
+                    origin: [
+                        {
+                            tool: "tool1",
+                            instantiation_index: 1,
+                        },
+                    ],
+                },
+            ],
+        }
+        useAgentChatHistoryStore.getState().updateChatContext("agent3", chatContext)
+
+        const updatedHistory = useAgentChatHistoryStore.getState().history
+        expect(updatedHistory["agent3"]?.chatContext).toEqual(chatContext)
+    })
+
+    it("should save and restore sly_data", async () => {
+        const slyData = {
+            key1: "value1",
+            key2: 123,
+        }
+        useAgentChatHistoryStore.getState().updateSlyData("agent4", slyData)
+
+        const updatedHistory = useAgentChatHistoryStore.getState().history
+        expect(updatedHistory["agent4"]?.slyData).toEqual(slyData)
+    })
+
+    it("should merge sly_data when updating, so a streamed message only has to carry what changed", async () => {
+        useAgentChatHistoryStore.getState().updateSlyData("agent5", {charges: 1, user: "bob"})
+        useAgentChatHistoryStore.getState().updateSlyData("agent5", {charges: 2})
+
+        expect(useAgentChatHistoryStore.getState().history["agent5"]?.slyData).toEqual({charges: 2, user: "bob"})
+    })
+
+    it("should replace sly_data when setting it, so the editor can delete keys", async () => {
+        useAgentChatHistoryStore.getState().updateSlyData("agent6", {charges: 1, user: "bob"})
+        useAgentChatHistoryStore.getState().setSlyData("agent6", {charges: 2})
+
+        expect(useAgentChatHistoryStore.getState().history["agent6"]?.slyData).toEqual({charges: 2})
+    })
+
+    it("should let sly_data be emptied", async () => {
+        useAgentChatHistoryStore.getState().updateSlyData("agent7", {user: "bob"})
+        useAgentChatHistoryStore.getState().setSlyData("agent7", {})
+
+        expect(useAgentChatHistoryStore.getState().history["agent7"]?.slyData).toEqual({})
+    })
+
+    it("should initialize defaults when setting sly_data on a fresh network", async () => {
+        useAgentChatHistoryStore.getState().setSlyData("agent10", {user: "bob"})
+
+        const entry = useAgentChatHistoryStore.getState().history["agent10"]
+        expect(entry?.chatHistory).toEqual([])
+        expect(entry?.chatContext).toBeNull()
+        expect(entry?.slyData).toEqual({user: "bob"})
+    })
+
+    it("should leave other parts of the history alone when setting sly_data", async () => {
+        useAgentChatHistoryStore.getState().updateChatHistory("agent8", TEST_MESSAGES)
+        useAgentChatHistoryStore.getState().setSlyData("agent8", {user: "bob"})
+
+        expect(useAgentChatHistoryStore.getState().history["agent8"]?.chatHistory).toEqual(TEST_MESSAGES)
+    })
+
+    it("should copy history from one agent to another", async () => {
+        useAgentChatHistoryStore.getState().updateChatHistory("agentA", TEST_MESSAGES)
+        useAgentChatHistoryStore.getState().updateSlyData("agentA", {key: "value"})
+
+        useAgentChatHistoryStore.getState().copyHistory("agentA", "agentB")
+
+        const copiedHistory = useAgentChatHistoryStore.getState().history
+        expect(copiedHistory["agentB"]?.chatHistory).toEqual(TEST_MESSAGES)
+        expect(copiedHistory["agentB"]?.slyData).toEqual({key: "value"})
+        // Original should still be present
+        expect(copiedHistory["agentA"]?.chatHistory).toEqual(TEST_MESSAGES)
+    })
+
+    it("strips agent_reservations from slyData when copying history", async () => {
+        // agent_reservations encodes the old network's reservation ID. If copied and bounced back to the
+        // backend on the next chat, the backend echoes the old reservation which then overwrites the new
+        // network in the temp-networks store via onChunkReceived.
+        useAgentChatHistoryStore.getState().updateSlyData("agentA", {
+            agent_reservations: [{reservation_id: "old-res-123", lifetime_in_seconds: 300}],
+            chat_context: "some context",
+        })
+
+        useAgentChatHistoryStore.getState().copyHistory("agentA", "agentB")
+
+        const copied = useAgentChatHistoryStore.getState().history["agentB"]?.slyData
+        expect(copied).not.toHaveProperty("agent_reservations")
+        expect(copied).toEqual({chat_context: "some context"})
+        // Source should be untouched
+        const source = useAgentChatHistoryStore.getState().history["agentA"]?.slyData
+        expect(source).toHaveProperty("agent_reservations")
+    })
+
+    it("should be a no-op when copying from a non-existent agent", async () => {
+        const historyBefore = useAgentChatHistoryStore.getState().history
+
+        useAgentChatHistoryStore.getState().copyHistory("nonexistent", "agentC")
+
+        const historyAfter = useAgentChatHistoryStore.getState().history
+        expect(historyAfter).toEqual(historyBefore)
+        expect(historyAfter["agentC"]).toBeUndefined()
+    })
+
+    it("calls removeItem on clearStorage", () => {
+        const removeItemSpy = vi.spyOn(indexedDBStorage, "removeItem").mockResolvedValueOnce()
+        useAgentChatHistoryStore.persist.clearStorage()
+        expect(removeItemSpy).toHaveBeenCalled()
+    })
+
+    it("should call getItem on rehydrate", async () => {
+        const getItemSpy = vi.spyOn(indexedDBStorage, "getItem").mockResolvedValueOnce("testItem")
+        await useAgentChatHistoryStore.persist.rehydrate()
+        expect(getItemSpy).toHaveBeenCalled()
+
+        // Exercise path where item is missing (e.g., first time user).
+        getItemSpy.mockClear()
+        getItemSpy.mockResolvedValueOnce(null)
+        await useAgentChatHistoryStore.persist.rehydrate()
+        expect(getItemSpy).toHaveBeenCalled()
+    })
+
+    it("should rehydrate stored history, including entries without chat history", async () => {
+        const stored = {
+            state: {
+                history: {
+                    withMessages: {
+                        chatHistory: mapChatMessagesToStoredMessages([new HumanMessage("hello")]),
+                        chatContext: null as unknown,
+                    },
+                    withoutMessages: {chatContext: null as unknown},
+                },
+            },
+            version: 0,
+        }
+        vi.spyOn(indexedDBStorage, "getItem").mockResolvedValueOnce(stored)
+        await useAgentChatHistoryStore.persist.rehydrate()
+
+        const rehydrated = useAgentChatHistoryStore.getState().history
+        expect(rehydrated["withMessages"]?.chatHistory?.[0]?.content).toBe("hello")
+        expect(rehydrated["withoutMessages"]?.chatHistory).toEqual([])
+    })
+
+    it("should rehydrate to empty history when the stored value has no history", async () => {
+        vi.spyOn(indexedDBStorage, "getItem").mockResolvedValueOnce({state: {}, version: 0})
+        await useAgentChatHistoryStore.persist.rehydrate()
+        expect(useAgentChatHistoryStore.getState().history).toEqual({})
+    })
+
+    it("should serialize history entries without chat history when persisting", async () => {
+        const setItemSpy = vi.spyOn(indexedDBStorage, "setItem").mockResolvedValue()
+        useAgentChatHistoryStore.getState().setSlyData("agent-no-chat", {foo: "bar"})
+        await vi.waitFor(() => expect(setItemSpy).toHaveBeenCalled())
+        const stored = setItemSpy.mock.calls.at(-1)?.[1] as {state: {history: Record<string, unknown>}}
+        expect(stored.state.history["agent-no-chat"]).toBeDefined()
+    })
+
+    it("should persist a state that has no history", async () => {
+        const setItemSpy = vi.spyOn(indexedDBStorage, "setItem").mockResolvedValue()
+
+        await useAgentChatHistoryStore.persist.getOptions().storage.setItem("chat-history", {state: {}} as never)
+
+        expect(setItemSpy).toHaveBeenCalledWith("chat-history", expect.objectContaining({state: {history: {}}}))
+    })
+
+    it("should copy history for an entry that has no sly_data", () => {
+        useAgentChatHistoryStore.setState({history: {agentX: {chatHistory: TEST_MESSAGES, chatContext: null}} as never})
+
+        useAgentChatHistoryStore.getState().copyHistory("agentX", "agentY")
+
+        const copied = useAgentChatHistoryStore.getState().history["agentY"]
+        expect(copied?.chatHistory).toEqual(TEST_MESSAGES)
+        expect(copied?.slyData).toEqual({})
+    })
+})

@@ -1,0 +1,130 @@
+/*
+Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+import Box from "@mui/material/Box"
+import Button, {ButtonProps} from "@mui/material/Button"
+import {styled, SxProps} from "@mui/material/styles"
+import {ComponentType, FC, JSX as ReactJSX, ReactNode, useState} from "react"
+
+import {MUIDialog} from "./MUIDialog"
+
+// #region: Styled Components
+export const StyledButton: ComponentType<ButtonProps> = styled(Button)({
+    fontSize: "0.8em",
+    padding: "0px 7px",
+})
+
+// #endregion: Styled Components
+
+// #region: Types
+interface ConfirmationModalProps {
+    cancelBtnLabel?: string
+    closeable?: boolean
+    content: ReactNode
+    dialogSx?: SxProps
+    handleCancel?: () => void
+    handleOk?: () => void
+    id: string
+    maskCloseable?: boolean
+    okBtnLabel?: string
+    title: ReactNode
+}
+// #endregion: Types
+
+export const ConfirmationModal: FC<ConfirmationModalProps> = ({
+    cancelBtnLabel,
+    closeable = true,
+    content = "",
+    dialogSx,
+    handleCancel = null,
+    handleOk = null,
+    id = "",
+    maskCloseable = false,
+    okBtnLabel,
+    title = "",
+}) => {
+    const [modalOpen, setModalOpen] = useState<boolean>(true)
+    const [isLoading, setIsLoading] = useState<boolean>(false)
+
+    const handleCloseWrapper = (_event?: object, reason?: string) => {
+        // Prevent closing on click of gray background mask
+        if (!maskCloseable && reason === "backdropClick") {
+            return
+        }
+        handleCancel?.() // call handleCancel if it's not null
+        setModalOpen(false)
+    }
+
+    const handleOKWrapper = async () => {
+        try {
+            if (handleOk) {
+                setIsLoading(true)
+                handleOk()
+            }
+        } finally {
+            setModalOpen(false)
+            setIsLoading(false)
+        }
+    }
+
+    const Footer: ReactJSX.Element = (
+        <>
+            {handleCancel && ( // If there is no handleCancel passed, Cancel button will not be rendered
+                <StyledButton
+                    // This ID needs to be dynamic because there can be several instances of this on the page
+                    id={`${id}-confirm-cancel-btn`}
+                    key="confirm-cancel"
+                    onClick={() => handleCloseWrapper()}
+                    disabled={isLoading}
+                    variant="outlined"
+                >
+                    {cancelBtnLabel ?? "Cancel"}
+                </StyledButton>
+            )}
+            <StyledButton
+                // This ID needs to be dynamic because there can be several instances of this on the page
+                id={`${id}-confirm-ok-btn`}
+                key="confirm-ok"
+                disabled={isLoading}
+                onClick={() => handleOKWrapper()}
+                variant="contained"
+            >
+                {okBtnLabel ?? "Confirm"}
+            </StyledButton>
+        </>
+    )
+
+    return (
+        <MUIDialog
+            closeable={closeable}
+            contentSx={{fontSize: "0.8rem", minWidth: "550px", paddingTop: "0"}}
+            dialogSx={dialogSx}
+            footer={Footer}
+            id={`${id}-confirm-main`}
+            isOpen={modalOpen}
+            onClose={(_event?: object, reason?: string) => handleCloseWrapper(_event, reason)}
+            title={title}
+        >
+            {/* This ID needs to be dynamic because there can be several instances of this on the page */}
+            <Box
+                id={`${id}-confirm-content`}
+                sx={{marginTop: "15px"}}
+            >
+                {content}
+            </Box>
+        </MUIDialog>
+    )
+}

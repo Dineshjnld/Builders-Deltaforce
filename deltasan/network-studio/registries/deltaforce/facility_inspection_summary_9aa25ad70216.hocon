@@ -1,0 +1,61 @@
+{
+include "config/llm_config.hocon"
+
+  "metadata": {
+    "description": "Facility Inspection Summary · Inspection Notes Summary"
+  },
+  "max_execution_seconds": 120,
+  "tools": [
+    {
+      "name": "Coordinator",
+      "function": {
+        "description": "Inspection Notes Summary"
+      },
+      "instructions": "Use only the supplied materials. Flag missing evidence. Return recommendations for human review. Delegate to the specialists and combine their findings. Inspection Notes Summary",
+      "tools": [
+        "FacilityManager",
+        "Specialist2"
+      ]
+    },
+    {
+      "name": "FacilityManager",
+      "function": {
+        "description": "Review Inspection Notes",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and source material"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Use only the supplied materials. Flag missing evidence. Return recommendations for human review. Review Inspection Notes",
+      "tools": []
+    },
+    {
+      "name": "Specialist2",
+      "function": {
+        "description": "Flag Missing Owners",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and source material"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Use only the supplied materials. Flag missing evidence. Return recommendations for human review. Flag Missing Owners",
+      "tools": []
+    }
+  ]
+}

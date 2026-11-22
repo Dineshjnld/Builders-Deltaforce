@@ -1,0 +1,1896 @@
+/*
+Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+import {AIMessage} from "@langchain/core/messages"
+import {createTheme} from "@mui/material/styles"
+import {act, render, screen, waitFor, within} from "@testing-library/react"
+import {userEvent, UserEvent} from "@testing-library/user-event"
+import {createRef, Ref} from "react"
+
+import {
+    MOCK_CONNECTIVITY_INFO,
+    TEST_AGENT_MATH_GUY,
+    TEST_AGENT_MUSIC_NERD,
+} from "../../../../../../__tests__/common/NetworksListMock"
+import {withStrictMocks} from "../../../../../../__tests__/common/strictMocks"
+import {USER_AGENTS} from "../../../../../../__tests__/common/UserAgentTestUtils"
+import {
+    ChatCommon,
+    ChatCommonHandle,
+    ChatCommonProps,
+    roleToExportLabel,
+} from "../../../../components/AgentChat/ChatCommon/ChatCommon"
+import {MAX_TURNS} from "../../../../components/AgentChat/ChatCommon/Const"
+import {MessageRole} from "../../../../components/AgentChat/ChatCommon/ConversationTurn"
+import {MAX_SAMPLE_QUERIES, QUERY_TRUNCATE_LENGTH} from "../../../../components/AgentChat/ChatCommon/SampleQueries"
+import {CombinedAgentType, givesFinalAnswer, LegacyAgentType} from "../../../../components/AgentChat/Common/Types"
+import {getAgentFunction, getConnectivity, sendChatQuery} from "../../../../controller/agent/Agent"
+import {sendLlmRequest, StreamingUnit} from "../../../../controller/llm/LlmChat"
+import {ChatContext, ChatMessage, ChatMessageType, ChatResponse} from "../../../../generated/neuro-san/NeuroSanClient"
+import {useAgentChatHistoryStore} from "../../../../state/ChatHistory"
+import {useSettingsStore} from "../../../../state/Settings"
+import {downloadFile, toSafeFilename} from "../../../../utils/File"
+import {getZIndex} from "../../../../utils/zIndexLayers"
+
+// Mock agent API
+vi.mock("../../../../controller/agent/Agent")
+
+// Mock llm_chat API
+vi.mock("../../../../controller/llm/LlmChat")
+
+// Don't want to send user notifications during tests so mock this
+vi.mock("../../../../components/Common/notification")
+
+vi.mock("../../../../utils/File", async () => {
+    const actual = vi.importActual("../../../../utils/File")
+    return {
+        ...(await actual),
+        downloadFile: vi.fn(),
+    }
+})
+
+const TEST_USER = "testUser"
+const CHAT_WITH_MATH_GUY = `Chat with ${TEST_AGENT_MATH_GUY}`
+
+const getResponseMessage = (type: ChatMessageType, text: string): ChatMessage => ({
+    type,
+    text,
+    chat_context: {
+        chat_histories: [
+            {
+                messages: [
+                    {
+                        type,
+                        text,
+                    },
+                ],
+            },
+        ],
+    },
+})
+
+type SendChatQueryArgs = Parameters<typeof sendChatQuery>
+type SendChatQueryCallback = SendChatQueryArgs[4]
+type SendChatQueryChatContext = SendChatQueryArgs[5]
+
+const mockSendChatQuery = (
+    handler: (args: {
+        callback: SendChatQueryCallback
+        chatContext: SendChatQueryChatContext
+        args: SendChatQueryArgs
+    }) => void
+) => {
+    vi.mocked(sendChatQuery).mockImplementation(async (...args) => {
+        const callback = args[4]
+        const chatContext = args[5]
+
+        handler({callback, chatContext, args})
+
+        return {} satisfies Awaited<ReturnType<typeof sendChatQuery>>
+    })
+}
+
+describe("ChatCommon", () => {
+    withStrictMocks()
+
+    let user: UserEvent
+
+    const defaultProps: ChatCommonProps = {
+        currentUser: TEST_USER,
+        id: "test",
+        isAwaitingLlm: false,
+        onSend: vi.fn(),
+        sampleQueries: MOCK_CONNECTIVITY_INFO.metadata["sample_queries"],
+        setIsAwaitingLlm: vi.fn(),
+        selectedNetwork: TEST_AGENT_MATH_GUY,
+    }
+
+    const renderChatCommonComponent = (overrides: Partial<ChatCommonProps> & {ref?: Ref<ChatCommonHandle>} = {}) => {
+        return {
+            render: render(
+                <ChatCommon
+                    {...defaultProps}
+                    {...overrides}
+                />
+            ),
+        }
+    }
+
+    beforeEach(() => {
+        user = userEvent.setup({delay: null})
+
+        // Mock getAgentFunction to return dummy connectivity info
+        vi.mocked(getAgentFunction).mockResolvedValue({
+            function: {
+                description: "Test description",
+            },
+        })
+
+        // Reset history. TODO: would be nice if withStrictMocks could also reset Zustand stores
+        // but that requires extra machinery, tracking "known stores", etc. For now, just reset the one store
+        // that we know is relevant to these tests.
+        useAgentChatHistoryStore.setState({history: {}})
+
+        useSettingsStore.getState().updateSettings({
+            appearance: {
+                useNativeNames: true,
+            },
+        })
+    })
+
+    const sendQuery = async (agent: CombinedAgentType, query: string) => {
+        // locate user query input
+        const userQueryInput = screen.getByPlaceholderText(`Chat with ${agent}`)
+
+        // Type a query
+        await user.click(userQueryInput)
+        await user.paste(query)
+
+        // Find "Send" button
+        const sendButton = screen.getByRole("button", {name: "Send"})
+
+        // Click on the "Send" button
+        await user.click(sendButton)
+    }
+
+    describe("Basic Rendering", () => {
+        it("Should render correctly", async () => {
+            renderChatCommonComponent({})
+
+            await screen.findByText(TEST_AGENT_MATH_GUY)
+
+            // Should have "Clear Chat", "Regenerate" and "Send" buttons
+            screen.getByRole("button", {name: "Clear Chat"})
+            screen.getByRole("button", {name: "Regenerate"})
+            screen.getByRole("button", {name: "Send"})
+        })
+
+        it("Renders with network description", async () => {
+            const networkDescription = "test network description"
+            renderChatCommonComponent({networkDescription})
+
+            // Should show description and agent
+            screen.getByText(`${TEST_AGENT_MATH_GUY}:`)
+            screen.getByText(networkDescription)
+        })
+
+        it("Should render and send sample queries correctly", async () => {
+            const mockSendFunction = vi.fn()
+            renderChatCommonComponent({onSend: mockSendFunction})
+
+            // Make sure long query chip is truncated
+            const sampleQueries = MOCK_CONNECTIVITY_INFO.metadata.sample_queries
+            const expectedLongQuery = `${sampleQueries[1].slice(0, QUERY_TRUNCATE_LENGTH)}...`
+            await screen.findByText(expectedLongQuery)
+
+            // Make sure we only display the first 5 queries
+            await screen.findByText(sampleQueries[2])
+            await screen.findByText(sampleQueries[3])
+            await screen.findByText(sampleQueries[4])
+            expect(screen.queryByText(sampleQueries[5])).not.toBeInTheDocument()
+
+            // Sample query chips use the outlined, hairline-bordered style
+            const sampleQueryChips = document.querySelectorAll("#sample-queries-box .MuiChip-root")
+            expect(sampleQueryChips).toHaveLength(MAX_SAMPLE_QUERIES)
+            for (const chip of sampleQueryChips) {
+                expect(chip).toHaveClass("MuiChip-outlined")
+            }
+
+            for (const query of sampleQueries.slice(0, MAX_SAMPLE_QUERIES - 1)) {
+                mockSendFunction.mockClear()
+                const truncatedQuery =
+                    query.length > QUERY_TRUNCATE_LENGTH ? `${query.slice(0, QUERY_TRUNCATE_LENGTH)}...` : query
+                // Click a sample query
+                const sampleQueryButton = await screen.findByText(truncatedQuery)
+                await user.click(sampleQueryButton)
+
+                expect(mockSendFunction).toHaveBeenCalledTimes(1)
+                expect(mockSendFunction).toHaveBeenCalledWith(query)
+            }
+        })
+
+        it("Should handle missing sample queries gracefully", async () => {
+            renderChatCommonComponent({sampleQueries: undefined})
+
+            await screen.findByText(TEST_AGENT_MATH_GUY)
+
+            // Should be no sample query chips rendered
+            expect(document.querySelectorAll(".MuiChip-root").length).toBe(0)
+        })
+
+        it("Should handle empty sample queries gracefully", async () => {
+            renderChatCommonComponent({sampleQueries: []})
+
+            await screen.findByText(TEST_AGENT_MATH_GUY)
+
+            // Should be no sample query chips rendered
+            expect(document.querySelectorAll(".MuiChip-root").length).toBe(0)
+        })
+
+        it("Should show agent introduction", async () => {
+            renderChatCommonComponent()
+
+            await screen.findByText(TEST_AGENT_MATH_GUY)
+        })
+
+        it("Should use custom agent greetings when supplied", async () => {
+            const customGreeting = "Custom Greeting"
+            renderChatCommonComponent({
+                customAgentGreetings: {
+                    [TEST_AGENT_MATH_GUY]: customGreeting,
+                },
+            })
+
+            await screen.findByText(customGreeting)
+        })
+
+        it("Should render with title and close button when provided", async () => {
+            const mockOnClose = vi.fn()
+            const testTitle = "Test Chat Title"
+
+            renderChatCommonComponent({
+                title: testTitle,
+                onClose: mockOnClose,
+            })
+
+            // Check that title is rendered
+            await screen.findByText(testTitle)
+
+            // Check that close button is rendered
+            await screen.findByTestId("close-button-test")
+        })
+
+        it("Should apply custom backgroundColor when provided", async () => {
+            const customColor = "#FF0000"
+            renderChatCommonComponent({
+                backgroundColor: customColor,
+            })
+
+            let chatContainer: HTMLElement | null = null
+            await waitFor(() => {
+                chatContainer = document.getElementById("llm-responses")
+                expect(chatContainer).toBeInTheDocument()
+            })
+
+            expect(chatContainer).toHaveStyle({"background-color": customColor})
+        })
+
+        it("Should use custom agent placeholder when provided", async () => {
+            const customPlaceholder = "Custom placeholder text"
+            const customPlaceholders = {
+                [TEST_AGENT_MATH_GUY]: customPlaceholder,
+            }
+
+            renderChatCommonComponent({
+                agentPlaceholders: customPlaceholders,
+            })
+
+            await screen.findByPlaceholderText(customPlaceholder)
+        })
+    })
+
+    const sendChatQueryWithResponse = async () => {
+        const responseText = "Sample response text for save chat test"
+        const chatResponse: ChatResponse = {
+            response: {
+                type: ChatMessageType.AGENT_FRAMEWORK,
+                text: responseText,
+                origin: [{tool: "testTool", instantiation_index: 1}],
+            },
+        }
+
+        const chunk = JSON.stringify(chatResponse)
+        mockSendChatQuery(({callback}) => {
+            callback(chunk)
+        })
+
+        const query = "Sample test query for chunk handling"
+        await sendQuery(TEST_AGENT_MATH_GUY, query)
+        return {responseText, query}
+    }
+
+    describe("Interactivity", () => {
+        it("Should behave correctly when awaiting the LLM response", async () => {
+            renderChatCommonComponent({isAwaitingLlm: true})
+
+            // "Stop" button should be enabled while awaiting LLM response
+            expect(await screen.findByRole("button", {name: "Stop"})).toBeEnabled()
+
+            // "Send" button should be disabled while awaiting LLM response
+            expect(await screen.findByRole("button", {name: "Send"})).toBeDisabled()
+
+            // "Clear Chat" button should not be in the document while awaiting LLM response
+            expect(screen.queryByRole("button", {name: "Clear Chat"})).not.toBeInTheDocument()
+
+            // "Regenerate" button should be replaced by "Stop" button while awaiting LLM response
+            expect(screen.queryByRole("button", {name: "Regenerate"})).not.toBeInTheDocument()
+
+            // Working indicator: gradient label plus pulsing dots exposed as a progress indicator
+            expect(screen.getByText("Working...")).toHaveAttribute("id", "working-span")
+            expect(screen.getByRole("progressbar", {name: "Working"})).toHaveAttribute("id", "awaitingOutputSpinner")
+        })
+
+        it("Should handle user input correctly and should call Send on click", async () => {
+            const mockSendFunction = vi.fn()
+            const strToCheck = "Please fix my internet"
+
+            renderChatCommonComponent({onSend: mockSendFunction})
+
+            const userInput = await screen.findByPlaceholderText(CHAT_WITH_MATH_GUY)
+
+            // Type user input
+            await user.click(userInput)
+            await user.paste(strToCheck)
+
+            // Check that user input is correct
+            expect(userInput).toHaveValue(strToCheck)
+
+            const sendButton = await screen.findByRole("button", {name: "Send"})
+
+            // Click Send button
+            await user.click(sendButton)
+
+            // Check that Send button on click works
+            expect(mockSendFunction).toHaveBeenCalledTimes(1)
+            expect(mockSendFunction).toHaveBeenCalledWith(strToCheck)
+        })
+
+        it("Should call Send on enter", async () => {
+            const mockSendFunction = vi.fn()
+            const strToCheck = "Please fix my internet"
+
+            renderChatCommonComponent({onSend: mockSendFunction})
+
+            const userInput = screen.getByPlaceholderText(CHAT_WITH_MATH_GUY)
+
+            // Type user input
+            await user.click(userInput)
+            await user.paste(strToCheck)
+
+            // Press enter
+            await user.keyboard("{Enter}")
+
+            // Check that enter has triggered the Send
+            await waitFor(() => expect(mockSendFunction).toHaveBeenCalledTimes(1))
+            await waitFor(() => expect(mockSendFunction).toHaveBeenCalledWith(strToCheck))
+        })
+
+        it("Should not call Send on enter + shift and should handle multiline input correctly", async () => {
+            const mockSendFunction = vi.fn()
+            const strToCheckLine1 = "Please fix my internet line 1"
+            const strToCheckLine2 = "Please fix my internet line 2"
+            const fullStrToCheck = `${strToCheckLine1}\n${strToCheckLine2}`
+
+            renderChatCommonComponent({onSend: mockSendFunction})
+
+            const userInput = screen.getByPlaceholderText(CHAT_WITH_MATH_GUY)
+
+            // Type line 1
+            await user.click(userInput)
+            await user.paste(strToCheckLine1)
+            // Type enter + shift
+            await user.type(userInput, "{Shift>}{Enter}{/Shift}")
+
+            // Make sure that enter + shift has not triggered the Send
+            await waitFor(() => expect(mockSendFunction).not.toHaveBeenCalledTimes(1))
+            await waitFor(() => expect(mockSendFunction).not.toHaveBeenCalledWith(strToCheckLine1))
+
+            // Type line 2
+            await user.paste(strToCheckLine2)
+
+            // Press enter
+            await user.keyboard("{Enter}")
+
+            await waitFor(() => expect(mockSendFunction).toHaveBeenCalledTimes(1))
+            await waitFor(() => expect(mockSendFunction).toHaveBeenCalledWith(fullStrToCheck))
+        })
+
+        it("Should keep very long prompts scrollable", async () => {
+            const rowHeight = 20
+            const visibleRows = 8
+            const promptRows = 12
+            const longPrompt = Array.from({length: promptRows}, (_, index) => `Line ${index + 1}`).join("\n")
+            const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "scrollHeight")
+            const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "clientHeight")
+
+            Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", {
+                configurable: true,
+                get() {
+                    // eslint-disable-next-line unicorn/no-this-outside-of-class -- property getter needs its element
+                    return this.value.split("\n").length * rowHeight
+                },
+            })
+            Object.defineProperty(HTMLTextAreaElement.prototype, "clientHeight", {
+                configurable: true,
+                get() {
+                    // eslint-disable-next-line unicorn/no-this-outside-of-class -- property getter needs its element
+                    return Number.parseFloat(this.style.height) || rowHeight
+                },
+            })
+
+            try {
+                renderChatCommonComponent()
+
+                const userInput = screen.getByPlaceholderText<HTMLTextAreaElement>(CHAT_WITH_MATH_GUY)
+                await user.click(userInput)
+                await user.paste(longPrompt)
+
+                await waitFor(() => expect(userInput.clientHeight).toBe(visibleRows * rowHeight))
+                expect(userInput).toHaveValue(longPrompt)
+                expect(userInput.scrollHeight).toBe(promptRows * rowHeight)
+                expect(userInput.scrollHeight).toBeGreaterThan(userInput.clientHeight)
+            } finally {
+                if (originalScrollHeight) {
+                    Object.defineProperty(HTMLTextAreaElement.prototype, "scrollHeight", originalScrollHeight)
+                }
+                if (originalClientHeight) {
+                    Object.defineProperty(HTMLTextAreaElement.prototype, "clientHeight", originalClientHeight)
+                }
+            }
+        })
+
+        it("Should refuse interaction when no target agent is set", async () => {
+            const mockSendFunction = vi.fn()
+            renderChatCommonComponent({onSend: mockSendFunction, selectedNetwork: null})
+
+            // Should be no "Chat with"
+            expect(screen.queryByPlaceholderText(/Chat with/u)).not.toBeInTheDocument()
+
+            const overlay = document.getElementById("chat-disabled-overlay")
+            expect(overlay).toHaveStyle({
+                position: "absolute",
+                zIndex: getZIndex(2, createTheme()),
+                cursor: "not-allowed",
+                pointerEvents: "all",
+            })
+        })
+
+        it("Should offer to select the network designer when no network is selected", async () => {
+            const setSelectedNetwork = vi.fn()
+            renderChatCommonComponent({selectedNetwork: null, setSelectedNetwork})
+
+            await user.click(screen.getByLabelText("select-network-designer"))
+
+            expect(setSelectedNetwork).toHaveBeenCalledExactlyOnceWith(expect.any(String))
+        })
+
+        it("Should refuse interaction when API keys are required but not present", async () => {
+            renderChatCommonComponent({hasMissingApiKeys: true})
+
+            // Should be no "Chat with"
+            expect(screen.queryByPlaceholderText(/Chat with/u)).not.toBeInTheDocument()
+
+            const overlay = document.getElementById("chat-disabled-overlay")
+            expect(overlay).toHaveStyle({
+                position: "absolute",
+                zIndex: getZIndex(2, createTheme()),
+                cursor: "not-allowed",
+                pointerEvents: "all",
+            })
+        })
+
+        it("Should not clear chat when a new agent is selected", async () => {
+            const {
+                render: {rerender},
+            } = renderChatCommonComponent()
+
+            // Make sure first agent greeting appears
+            await screen.findByText(TEST_AGENT_MATH_GUY)
+
+            rerender(
+                <ChatCommon
+                    {...defaultProps}
+                    selectedNetwork={TEST_AGENT_MUSIC_NERD}
+                />
+            )
+
+            // Previous agent output should still be present
+            screen.queryByText(TEST_AGENT_MATH_GUY)
+
+            // New agent greeting should be present
+            await screen.findByText(TEST_AGENT_MUSIC_NERD)
+        })
+
+        it("Should handle Stop correctly", async () => {
+            const setAwaitingLlmMock = vi.fn()
+            renderChatCommonComponent({setIsAwaitingLlm: setAwaitingLlmMock, isAwaitingLlm: true})
+
+            const stopButton = await screen.findByRole("button", {name: "Stop"})
+
+            await user.click(stopButton)
+            await screen.findByText("Request cancelled.")
+            expect(setAwaitingLlmMock).toHaveBeenCalledTimes(1)
+            expect(setAwaitingLlmMock).toHaveBeenCalledWith(false)
+        })
+
+        it("Should handle External Stop correctly", async () => {
+            const setAwaitingLlmMock = vi.fn()
+            const ref = createRef<ChatCommonHandle>()
+            renderChatCommonComponent({setIsAwaitingLlm: setAwaitingLlmMock, isAwaitingLlm: true, ref})
+
+            // Unusual case: need act() here because handleStop is not tied to any simulated event handler like a button
+            // click etc.
+            await act(async () => {
+                // Call the external stop handler directly
+                ref.current?.handleStop()
+            })
+
+            await screen.findByText("Request cancelled.")
+            expect(setAwaitingLlmMock).toHaveBeenCalledTimes(1)
+            expect(setAwaitingLlmMock).toHaveBeenCalledWith(false)
+        })
+
+        it("Should clear the chat when handleClearChat is called via ref", async () => {
+            const ref = createRef<ChatCommonHandle>()
+            renderChatCommonComponent({ref})
+
+            // First send a message so there is chat output to clear
+            const testMessage = "test message for ref clearing"
+            await sendQuery(TEST_AGENT_MATH_GUY, testMessage)
+
+            // Wait for the message to appear. It appears twice -- once in chat history, once "live"
+            expect(await screen.findAllByText(testMessage)).toHaveLength(2)
+
+            // Call it and wait for all async state updates to settle
+            await act(async () => {
+                ref.current?.handleClearChat()
+            })
+
+            // The previously sent message should be gone, while sample queries re-appear
+            expect(screen.queryByText(testMessage)).not.toBeInTheDocument()
+            await screen.findByText(MOCK_CONNECTIVITY_INFO.metadata.sample_queries[0])
+        })
+
+        it("Should handle Clear Chat functionality", async () => {
+            renderChatCommonComponent()
+
+            // First send a message to create chat output
+            const testMessage = "test message for clearing"
+            await sendQuery(TEST_AGENT_MATH_GUY, testMessage)
+
+            // Wait for the message to appear. It appears twice -- once in chat history, once "live"
+            expect(await screen.findAllByText(testMessage)).toHaveLength(2)
+
+            // Find and click Clear Chat button
+            const clearButton = screen.getByRole("button", {name: "Clear Chat"})
+
+            await user.click(clearButton)
+
+            // Confirmation dialog should show
+            await screen.findByText(/Clear all chat /u)
+
+            // First click "cancel"
+            const cancelButton = screen.getByRole("button", {name: "Cancel"})
+            await user.click(cancelButton)
+
+            // Text should still be present
+            await screen.findAllByText(testMessage)
+
+            // Click Clear Chat again
+            await user.click(clearButton)
+
+            // This time click "ok"
+            const okButton = screen.getByRole("button", {name: "Yes, clear chat"})
+            await user.click(okButton)
+
+            // Verify chat is cleared and agent introduction appears
+            await screen.findByText(TEST_AGENT_MATH_GUY)
+            expect(screen.queryByText(testMessage)).not.toBeInTheDocument()
+        })
+
+        it("Should handle regenerate functionality", async () => {
+            renderChatCommonComponent()
+
+            // First send a query
+            const testQuery = "test query for regenerate"
+            const initialResponse: ChatResponse = {
+                response: {
+                    type: ChatMessageType.AGENT_FRAMEWORK,
+                    text: "initial response",
+                },
+            }
+
+            mockSendChatQuery(({callback}) => {
+                callback(JSON.stringify(initialResponse))
+            })
+
+            await sendQuery(TEST_AGENT_MATH_GUY, testQuery)
+
+            // Regenerate button should now be enabled
+            const regenerateButton = screen.getByRole("button", {name: "Regenerate"})
+            expect(regenerateButton).toBeEnabled()
+
+            // Mock the regenerate request
+            const regenerateResponse: ChatResponse = {
+                response: {
+                    type: ChatMessageType.AGENT_FRAMEWORK,
+                    text: "regenerated response",
+                },
+            }
+
+            mockSendChatQuery(({callback}) => {
+                callback(JSON.stringify(regenerateResponse))
+            })
+
+            await user.click(regenerateButton)
+
+            // Check that regenerate was triggered (component should show new response)
+            expect(regenerateButton).toBeInTheDocument()
+        })
+
+        it("Should handle Save Chat functionality", async () => {
+            const downloadFileMock = vi.mocked(downloadFile)
+
+            renderChatCommonComponent({selectedNetwork: TEST_AGENT_MATH_GUY})
+            const {responseText, query} = await sendChatQueryWithResponse()
+
+            // locate Save button
+            const saveButton = screen.getByRole("button", {name: "Save Chat"})
+            await user.click(saveButton)
+
+            expect(downloadFileMock).toHaveBeenCalledTimes(1)
+            expect(downloadFileMock).toHaveBeenCalledWith(
+                expect.stringMatching(new RegExp(`${query}.*${responseText}`, "su")),
+                `${toSafeFilename(`${TEST_AGENT_MATH_GUY}-history`)}.txt`,
+                "text/plain"
+            )
+        })
+
+        it("Should handle Save Chat functionality with current session but no history", async () => {
+            const downloadFileMock = vi.mocked(downloadFile)
+
+            renderChatCommonComponent({selectedNetwork: TEST_AGENT_MATH_GUY})
+
+            const {responseText, query} = await sendChatQueryWithResponse()
+
+            act(() => {
+                useAgentChatHistoryStore.setState({history: {}})
+            })
+
+            // locate Save button
+            const saveButton = screen.getByRole("button", {name: "Save Chat"})
+            await user.click(saveButton)
+
+            expect(downloadFileMock).toHaveBeenCalledTimes(1)
+            expect(downloadFileMock).toHaveBeenCalledWith(
+                expect.stringMatching(new RegExp(`${query}.*${responseText}`, "su")),
+                `${toSafeFilename(`${TEST_AGENT_MATH_GUY}-history`)}.txt`,
+                "text/plain"
+            )
+        })
+
+        it("Should handle Save Chat functionality history but no current session", async () => {
+            const downloadFileMock = vi.mocked(downloadFile)
+
+            renderChatCommonComponent({selectedNetwork: TEST_AGENT_MATH_GUY})
+
+            const testMessage = "Test message in history"
+            const messages = [new AIMessage(testMessage)]
+
+            act(() => {
+                useAgentChatHistoryStore.getState().updateChatHistory(TEST_AGENT_MATH_GUY, messages)
+            })
+
+            // locate Save button
+            const saveButton = screen.getByRole("button", {name: "Save Chat"})
+            await user.click(saveButton)
+
+            expect(downloadFileMock).toHaveBeenCalledTimes(1)
+            expect(downloadFileMock).toHaveBeenCalledWith(
+                expect.stringMatching(new RegExp(testMessage, "su")),
+                `${toSafeFilename(`${TEST_AGENT_MATH_GUY}-history`)}.txt`,
+                "text/plain"
+            )
+        })
+
+        it("Should maps roles to labels correctly for exporting", async () => {
+            expect(roleToExportLabel(MessageRole.User)).toBe("User")
+            expect(roleToExportLabel(MessageRole.Agent)).toBe("Assistant")
+            expect(roleToExportLabel(MessageRole.FinalAnswer)).toBe("Assistant")
+            expect(roleToExportLabel(MessageRole.Warning)).toBe("Warning")
+            expect(roleToExportLabel(MessageRole.Error)).toBe("Error")
+            expect(roleToExportLabel("unknownRole" as unknown as MessageRole)).toBe(undefined)
+        })
+
+        it("clears input when clear button is clicked", async () => {
+            renderChatCommonComponent()
+            const input = screen.getByPlaceholderText(CHAT_WITH_MATH_GUY)
+            await user.click(input)
+            await user.paste("hello")
+            // Find the clear input button by id (since it has no accessible name)
+            const clearBtn = document.getElementById("clear-input-button")
+            expect(clearBtn).toBeTruthy()
+            if (clearBtn) {
+                await user.click(clearBtn)
+            }
+            expect(input).toHaveValue("")
+        })
+
+        it("Should handle empty input correctly", async () => {
+            renderChatCommonComponent()
+
+            const userInput = screen.getByPlaceholderText(CHAT_WITH_MATH_GUY)
+            const sendButton = screen.getByRole("button", {name: "Send"})
+
+            // Send button should be disabled with empty input
+            expect(sendButton).toBeDisabled()
+
+            // Try with whitespace only
+            await user.click(userInput)
+            await user.paste(" ".repeat(3))
+            expect(sendButton).toBeDisabled()
+
+            // Clear and add actual content
+            await user.clear(userInput)
+            await user.paste("actual content")
+            expect(sendButton).toBeEnabled()
+        })
+
+        it.each(["Wrap output", "Auto-scroll output"])("Should handle %s toggle correctly", async (menuLabel) => {
+            renderChatCommonComponent()
+
+            const optionsButton = screen.getByTestId("TuneIcon")
+            await user.click(optionsButton)
+
+            const menuItem = screen.getByRole("menuitem", {name: menuLabel})
+
+            // Checked by default
+            expect(menuItem.querySelector("svg")).toHaveAttribute("data-testid", "CheckBoxIcon")
+
+            await user.click(menuItem)
+
+            // Should now be unchecked
+            expect(menuItem.querySelector("svg")).toHaveAttribute("data-testid", "CheckBoxOutlineBlankIcon")
+        })
+
+        it("should handle opening and closing options menu", async () => {
+            renderChatCommonComponent()
+
+            const optionsButton = screen.getByTestId("TuneIcon")
+            await user.click(optionsButton)
+
+            await screen.findByText("Wrap output")
+
+            await user.keyboard("{Escape}")
+
+            await waitFor(() => {
+                expect(screen.queryByText("Wrap output")).not.toBeInTheDocument()
+            })
+        })
+    })
+
+    describe("Chunk Handling", () => {
+        it("Should handle receiving chunks from Neuro-san agents correctly", async () => {
+            const onChunkReceivedMock = vi.fn().mockReturnValue(true)
+            const testResponseText = '"Response text from LLM"'
+
+            renderChatCommonComponent({onChunkReceived: onChunkReceivedMock})
+
+            const chatResponse: ChatResponse = {
+                response: {
+                    type: ChatMessageType.AGENT_FRAMEWORK,
+                    text: testResponseText,
+                    origin: [{tool: "testTool", instantiation_index: 1}],
+                    sly_data: {answer: 42},
+                },
+            }
+
+            const chunk = JSON.stringify(chatResponse)
+            mockSendChatQuery(({callback}) => {
+                callback(chunk)
+            })
+
+            const query = "Sample test query for chunk handling"
+            await sendQuery(TEST_AGENT_MATH_GUY, query)
+
+            // Should appear once in chat history, once in regular output
+            expect(await screen.findAllByText(testResponseText)).toHaveLength(2)
+            expect(onChunkReceivedMock).toHaveBeenCalledTimes(1)
+            expect(onChunkReceivedMock).toHaveBeenCalledWith(chunk)
+        })
+
+        it("Should handle receiving chunks from legacy agents correctly", async () => {
+            const onChunkReceivedMock = vi.fn().mockReturnValue(true)
+            const testResponseText1 = "Response text 1 from LLM"
+            const testResponseText2 = "Response text 2 from LLM"
+
+            renderChatCommonComponent({
+                onChunkReceived: onChunkReceivedMock,
+                selectedNetwork: LegacyAgentType.DataGenerator,
+            })
+
+            vi.mocked(sendLlmRequest).mockImplementation(
+                async (callback, _signal, _fetchUrl, _params, _userQuery, _chatHistory, _userId, _streamingUnit) => {
+                    callback(testResponseText1)
+                    callback(testResponseText2)
+                }
+            )
+
+            const query = "Sample test query for chunk handling"
+            await sendQuery(LegacyAgentType.DataGenerator, query)
+
+            const conversation = document.querySelector(`#${defaultProps.id}-conversation`)
+            within(conversation as HTMLElement).getByText(testResponseText1 + testResponseText2)
+            expect(onChunkReceivedMock).toHaveBeenCalledTimes(2)
+            expect(onChunkReceivedMock).toHaveBeenCalledWith(testResponseText1)
+            expect(onChunkReceivedMock).toHaveBeenCalledWith(testResponseText2)
+        })
+
+        it("Should handle final answer from legacy agents correctly", async () => {
+            const onChunkReceivedMock = vi.fn()
+            const finalAnswerText = "Sample final answer from LLM"
+            const testResponseText = `Final Answer: ${finalAnswerText}`
+
+            renderChatCommonComponent({onChunkReceived: onChunkReceivedMock, selectedNetwork: LegacyAgentType.DMSChat})
+
+            vi.mocked(sendLlmRequest).mockImplementation(
+                async (callback, _signal, _fetchUrl, _params, _userQuery, _chatHistory, _userId, _streamingUnit) => {
+                    callback(testResponseText)
+                }
+            )
+
+            const query = "Sample test query for legacy agent final answer handling"
+            await sendQuery(LegacyAgentType.DMSChat, query)
+
+            await screen.findByText(testResponseText)
+            expect(onChunkReceivedMock).toHaveBeenCalledTimes(1)
+            expect(onChunkReceivedMock).toHaveBeenCalledWith(testResponseText)
+
+            // The body of the final answer should be displayed
+            screen.getByText(finalAnswerText)
+        })
+
+        it("Should handle no chunks received", async () => {
+            renderChatCommonComponent()
+            screen.getByText(TEST_AGENT_MATH_GUY)
+            mockSendChatQuery(({callback}) => {
+                callback(null)
+            })
+
+            await sendQuery(TEST_AGENT_MATH_GUY, "test")
+
+            // No final answer from a Neuro-san agent; this is an error
+            const alertItem = screen.getByRole("alert")
+            within(alertItem).getByText(/final answer/u)
+        })
+
+        it("Should handle when legacy agents fail to send a Final Answer", async () => {
+            const onChunkReceivedMock = vi.fn()
+            const responseText = "Text without the magical final answer string"
+
+            expect(givesFinalAnswer(LegacyAgentType.OpportunityFinder)).toBe(false)
+            renderChatCommonComponent({
+                onChunkReceived: onChunkReceivedMock,
+                selectedNetwork: LegacyAgentType.OpportunityFinder,
+            })
+            screen.getByText(LegacyAgentType.OpportunityFinder)
+
+            vi.mocked(sendLlmRequest).mockImplementation(
+                async (callback, _signal, _fetchUrl, _params, _userQuery, _chatHistory, _userId, _streamingUnit) => {
+                    callback(responseText)
+                }
+            )
+
+            await sendQuery(LegacyAgentType.OpportunityFinder, "test")
+
+            // The chosen agent is known not to give a final answer, so we should just display whatever text it gives us
+            const conversation = document.querySelector(`#${defaultProps.id}-conversation`)
+            within(conversation as HTMLElement).getByText(responseText)
+        })
+
+        it("Should show an error when legacy agent fails to respond with a final answer", async () => {
+            const onChunkReceivedMock = vi.fn()
+            const responseText = "Text without the magical final answer string"
+
+            expect(givesFinalAnswer(LegacyAgentType.DMSChat)).toBe(true)
+            renderChatCommonComponent({
+                onChunkReceived: onChunkReceivedMock,
+                selectedNetwork: LegacyAgentType.DMSChat,
+            })
+
+            screen.getByText(LegacyAgentType.DMSChat)
+
+            vi.mocked(sendLlmRequest).mockImplementation(
+                async (callback, _signal, _fetchUrl, _params, _userQuery, _chatHistory, _userId, _streamingUnit) => {
+                    callback(responseText)
+                }
+            )
+
+            await sendQuery(LegacyAgentType.DMSChat, "test")
+
+            // This agent is supposed to give a final answer, so it's an error that it didn't. Check for the alert.
+            const alertItem = screen.getByRole("alert")
+            within(alertItem).getByText(/final answer/u)
+        })
+
+        it("Should correctly handle a chunk with an error block in the structure field", async () => {
+            const chatResponse = {
+                response: {
+                    type: ChatMessageType.AI,
+                    structure: {
+                        error: "Error message from LLM",
+                        traceback: "test traceback",
+                        tool: "test tool",
+                    },
+                },
+            }
+
+            renderChatCommonComponent()
+            mockSendChatQuery(({callback}) => {
+                callback(JSON.stringify(chatResponse))
+            })
+
+            const query = "Sample test query for error handling"
+            await sendQuery(TEST_AGENT_MATH_GUY, query)
+
+            // Should be 3 retries due to the error
+            expect(await screen.findAllByText(/Error occurred/u)).toHaveLength(3)
+
+            let alertItems: HTMLElement[]
+            await waitFor(() => {
+                alertItems = screen.getAllByRole("alert")
+                expect(alertItems).toHaveLength(3 + 1)
+            })
+
+            // First three are warnings
+            const warnings = screen.getAllByTestId("ReportProblemOutlinedIcon")
+            expect(warnings).toHaveLength(3)
+
+            // Final one is an error
+            const errors = screen.getAllByTestId("ErrorOutlineIcon")
+            expect(errors).toHaveLength(1)
+        })
+
+        it("Should handle final answer from Neuro-san agents correctly", async () => {
+            renderChatCommonComponent()
+
+            screen.getByText(TEST_AGENT_MATH_GUY)
+
+            const agentFinalAnswer = "Agent final answer"
+            const responseMessage = getResponseMessage(ChatMessageType.AGENT_FRAMEWORK, agentFinalAnswer)
+
+            // Chunk handler expects messages in "wire" (snake case) format since that is how they come from Neuro-san.
+            const chatResponse = {response: responseMessage}
+
+            mockSendChatQuery(({callback}) => {
+                callback(JSON.stringify(chatResponse))
+            })
+
+            await sendQuery(TEST_AGENT_MATH_GUY, "Sample test query final answer test")
+
+            // Should appear once in conversation section
+            const conversation = document.querySelector(`#${defaultProps.id}-conversation`)
+            within(conversation as HTMLElement).getByText(agentFinalAnswer)
+
+            // Should also appear in Chat History
+            const chatHistory = document.querySelector(`#${defaultProps.id}-history-items`)
+            within(chatHistory as HTMLElement).getByText(agentFinalAnswer)
+        })
+
+        it("Should handle final answer with no text, structure only from Neuro-san agents", async () => {
+            renderChatCommonComponent()
+
+            screen.getByText(TEST_AGENT_MATH_GUY)
+            const structure = {answer: "Final answer in structure"}
+            const responseMessage = {
+                ...getResponseMessage(ChatMessageType.AGENT_FRAMEWORK, undefined),
+                structure,
+            }
+
+            // Chunk handler expects messages in "wire" (snake case) format since that is how they come from Neuro-san.
+            const chatResponse = {response: responseMessage}
+
+            mockSendChatQuery(({callback}) => {
+                callback(JSON.stringify(chatResponse))
+            })
+
+            await sendQuery(TEST_AGENT_MATH_GUY, "Sample test query final answer test")
+
+            // Structure answer should be displayed in conversation section even if text is undefined
+            const conversation = document.querySelector(`#${defaultProps.id}-conversation`)
+            within(conversation as HTMLElement).getByText(new RegExp(structure.answer, "u"))
+        })
+
+        it("Should handle final answer with no text or structure from Neuro-san agents", async () => {
+            renderChatCommonComponent()
+
+            screen.getByText(TEST_AGENT_MATH_GUY)
+            const responseMessage: ChatMessage = {
+                type: ChatMessageType.AGENT_FRAMEWORK,
+                text: null,
+                structure: null,
+            }
+
+            // Chunk handler expects messages in "wire" (snake case) format since that is how they come from Neuro-san.
+            const chatResponse = {response: responseMessage}
+
+            mockSendChatQuery(({callback}) => {
+                callback(JSON.stringify(chatResponse))
+            })
+
+            await sendQuery(TEST_AGENT_MATH_GUY, "Sample test query final answer test")
+
+            // No final answer from a Neuro-san agent; this is an error
+            const alertItem = screen.getByRole("alert")
+            within(alertItem).getByText(/did not provide a final answer/u)
+        })
+
+        it("Should handle when Neuro-san agents fail to send a final answer", async () => {
+            renderChatCommonComponent()
+
+            screen.getByText(TEST_AGENT_MATH_GUY)
+            mockSendChatQuery(({callback}) => {
+                callback(JSON.stringify(getResponseMessage(ChatMessageType.AGENT, "response")))
+            })
+
+            await sendQuery(TEST_AGENT_MATH_GUY, "Sample test query final answer test")
+
+            // No final answer from a Neuro-san agent; this is an error
+            const alertItem = screen.getByRole("alert")
+            within(alertItem).getByText(/did not provide a final answer/u)
+        })
+
+        it("Should handle malformed JSON chunks gracefully", async () => {
+            renderChatCommonComponent()
+
+            const malformedChunk = "{ malformed json without closing brace"
+
+            mockSendChatQuery(({callback}) => {
+                callback(malformedChunk)
+            })
+
+            // Should not throw error when processing malformed JSON
+            await sendQuery(TEST_AGENT_MATH_GUY, "test query")
+
+            // Component should still be functional - check for agent greeting elements
+            const agentGreetings = screen.getAllByText(TEST_AGENT_MATH_GUY)
+            expect(agentGreetings.length).toBeGreaterThan(0)
+        })
+
+        it("Should handle chunks that return false from onChunkReceived", async () => {
+            const mockOnChunkReceived = vi.fn().mockReturnValue(false)
+
+            renderChatCommonComponent({
+                onChunkReceived: mockOnChunkReceived,
+            })
+
+            const testResponseText = "Response that should trigger retry"
+            const chatResponse: ChatResponse = {
+                response: {
+                    type: ChatMessageType.AGENT_FRAMEWORK,
+                    text: testResponseText,
+                },
+            }
+
+            mockSendChatQuery(({callback}) => {
+                callback(JSON.stringify(chatResponse))
+            })
+
+            await sendQuery(TEST_AGENT_MATH_GUY, "test query")
+
+            expect(mockOnChunkReceived).toHaveBeenCalledWith(JSON.stringify(chatResponse))
+        })
+
+        it("Should truncate at MAX_TURNS while retaining user queries", async () => {
+            renderChatCommonComponent()
+
+            const messages = Array.from({length: MAX_TURNS + 1}, (_, i) =>
+                getResponseMessage(ChatMessageType.AGENT, `Sample AI response ${i + 1}`)
+            )
+
+            mockSendChatQuery(({callback}) => {
+                for (const chatMessage of messages) {
+                    callback(JSON.stringify({response: chatMessage}))
+                }
+            })
+
+            await sendQuery(TEST_AGENT_MATH_GUY, "Test query")
+
+            await screen.findByText("Show Thinking")
+            within(screen.getByRole("region", {name: "Current conversation"})).getByText("Test query")
+            const thinkingSection = document.querySelector(`#${defaultProps.id}-thinking`)
+            expect(thinkingSection).toBeInTheDocument()
+
+            // Oldest streamed response should be evicted once MAX_TURNS is exceeded
+            expect(within(thinkingSection as HTMLElement).queryByText(/Sample AI response 1$/u)).not.toBeInTheDocument()
+
+            // Messages 2..MAX_TURNS+1 should be retained
+            for (let responseNumber = 2; responseNumber <= MAX_TURNS + 1; responseNumber += 1) {
+                expect(
+                    within(thinkingSection as HTMLElement).getByText(
+                        new RegExp(String.raw`Sample AI response ${responseNumber}(?!\d)`, "u")
+                    )
+                ).toBeInTheDocument()
+            }
+        })
+
+        it.each(["sample", "typed"])("Should retain a %s query throughout a long response", async (source) => {
+            // Use a long query so the sample chip is truncated.
+            const query =
+                "Explain the airline policy for changing international flights, including fees and refund eligibility."
+            const finalAnswer = "Here is the airline policy."
+            const onStreamingComplete = vi.fn()
+            let streamChunk: SendChatQueryCallback
+            let finishStream: () => void
+
+            vi.mocked(sendChatQuery).mockImplementation(async (...args) => {
+                streamChunk = args[4]
+                await new Promise<void>((resolve) => {
+                    finishStream = resolve
+                })
+                return {}
+            })
+
+            renderChatCommonComponent({sampleQueries: [query], onStreamingComplete})
+            const conversation = within(screen.getByRole("region", {name: "Current conversation"}))
+
+            if (source === "sample") {
+                await user.click(screen.getByRole("button", {name: `Click to send query: "${query}"`}))
+            } else {
+                await sendQuery(TEST_AGENT_MATH_GUY, query)
+            }
+
+            expect(conversation.getAllByText(query)).toHaveLength(1)
+
+            await act(async () => {
+                for (let index = 0; index < 2 * MAX_TURNS; index += 1) {
+                    streamChunk(
+                        JSON.stringify({response: getResponseMessage(ChatMessageType.AGENT, `Progress ${index}`)})
+                    )
+                }
+                streamChunk(
+                    JSON.stringify({response: getResponseMessage(ChatMessageType.AGENT_FRAMEWORK, finalAnswer)})
+                )
+            })
+
+            expect(onStreamingComplete).not.toHaveBeenCalled()
+            expect(conversation.getAllByText(query)).toHaveLength(1)
+
+            await act(async () => {
+                finishStream()
+            })
+
+            expect(onStreamingComplete).toHaveBeenCalledTimes(1)
+            expect(conversation.getAllByText(query)).toHaveLength(1)
+            conversation.getByText(finalAnswer)
+        })
+    })
+
+    describe("Fetch Errors", () => {
+        it("Should handle error thrown while fetching", async () => {
+            renderChatCommonComponent({selectedNetwork: LegacyAgentType.OpportunityFinder})
+
+            vi.mocked(sendLlmRequest).mockRejectedValue(new Error("Sample error from fetch"))
+
+            vi.spyOn(console, "error").mockImplementation(vi.fn())
+            await sendQuery(LegacyAgentType.OpportunityFinder, "Sample test query for handling errors during fetch")
+
+            // Should be 3 attempts, so 3 error messages
+            expect(await screen.findAllByText(/Error occurred:/u)).toHaveLength(3)
+
+            expect(console.error).toHaveBeenCalledTimes(3)
+        })
+
+        it("Should handle non-error type thrown while fetching", async () => {
+            renderChatCommonComponent({selectedNetwork: LegacyAgentType.OpportunityFinder})
+
+            vi.spyOn(console, "error").mockImplementation(vi.fn())
+
+            // Now throw something that isn't an Error (which is possible in JavaScript)
+            vi.mocked(sendLlmRequest).mockRejectedValue("Just a string, not an Error object")
+
+            await sendQuery(
+                LegacyAgentType.OpportunityFinder,
+                "Sample test query for handling non-Error types thrown during fetch"
+            )
+
+            expect(console.error).not.toHaveBeenCalled()
+        })
+
+        it("Should handle an abort error correctly", async () => {
+            renderChatCommonComponent({selectedNetwork: LegacyAgentType.OpportunityFinder})
+
+            const sendLlmRequestMock = vi.mocked(sendLlmRequest).mockRejectedValue(
+                new (class extends Error {
+                    constructor(message?: string) {
+                        super(message)
+                        this.name = "AbortError"
+                    }
+                })('"Operation was aborted"')
+            )
+
+            vi.spyOn(console, "error").mockImplementation(vi.fn())
+            await sendQuery(LegacyAgentType.OpportunityFinder, "Sample test query for handling errors during fetch")
+
+            // Should be only 1 attempt when we are aborted
+            expect(sendLlmRequestMock).toHaveBeenCalledTimes(1)
+
+            // For abort errors, we don't display the error block since they are handled differently
+            expect(screen.queryByText(/Error occurred:/u)).not.toBeInTheDocument()
+        })
+
+        it("Should handle other types of errors than AbortError correctly", async () => {
+            renderChatCommonComponent({selectedNetwork: LegacyAgentType.OpportunityFinder})
+
+            vi.spyOn(console, "error").mockImplementation(vi.fn())
+
+            vi.mocked(sendLlmRequest).mockRejectedValue(
+                new (class extends Error {
+                    constructor(message?: string) {
+                        super(message)
+                        this.name = "SomeOtherError"
+                    }
+                })("Some other error occurred")
+            )
+
+            await sendQuery(LegacyAgentType.OpportunityFinder, "Sample test query for handling errors during fetch")
+
+            // Should be retries when not "Abort" error
+            expect(sendLlmRequest).toHaveBeenCalledTimes(3)
+
+            // For errors other than Abort, we display an error block
+            screen.getAllByText(/Error occurred: SomeOtherError: Some other error occurred/u)
+        })
+
+        it("Should handle network request timeout", async () => {
+            renderChatCommonComponent()
+
+            // Mock a timeout scenario
+
+            vi.mocked(sendChatQuery).mockRejectedValue(new Error("Network timeout"))
+
+            vi.spyOn(console, "error").mockImplementation(vi.fn())
+            await sendQuery(TEST_AGENT_MATH_GUY, "test query for timeout")
+
+            // Should handle timeout gracefully and show error
+            await waitFor(() => {
+                expect(screen.getAllByText(/Error occurred:/u)).toHaveLength(3)
+            })
+        })
+
+        it("Should handle connectivity info error gracefully", async () => {
+            // Mock connectivity to throw an error
+            vi.mocked(getConnectivity).mockRejectedValue(new Error("Connectivity fetch failed"))
+
+            renderChatCommonComponent()
+
+            // Component should still render despite connectivity error
+            await screen.findByText(TEST_AGENT_MATH_GUY)
+        })
+    })
+
+    describe("Voice Input", () => {
+        it("Should handle voice transcription correctly", async () => {
+            // Store value to restore later
+            const win = window as Window & {
+                SpeechRecognition?: typeof SpeechRecognition
+            }
+            const originalSpeechRecognition = win.SpeechRecognition
+            const originalUserAgent = navigator.userAgent
+
+            // Mock speech recognition to test actual voice transcription behavior
+            const mockSpeechRecognition = {
+                continuous: true,
+                interimResults: true,
+                lang: "en-US",
+                onstart: null as (() => void) | null,
+                onresult: null as ((event: SpeechRecognitionEvent) => void) | null,
+                onerror: null as ((event: Event) => void) | null,
+                onend: null as (() => void) | null,
+                start: vi.fn(),
+                stop: vi.fn(),
+                addEventListener: vi.fn((event: string, handler: (event?: unknown) => void) => {
+                    // Store the handlers so we can call them in tests
+                    switch (event) {
+                        case "result":
+                            mockSpeechRecognition.onresult = handler
+                            break
+                        case "start":
+                            mockSpeechRecognition.onstart = handler
+                            break
+                        case "end":
+                            mockSpeechRecognition.onend = handler
+                            break
+                        case "error":
+                            // Intentionally mocking it this way
+                            // eslint-disable-next-line unicorn/prefer-add-event-listener
+                            mockSpeechRecognition.onerror = handler
+                            break
+                        default:
+                            // Handle any other event types
+                            break
+                    }
+                }),
+                removeEventListener: vi.fn(),
+            }
+
+            Object.defineProperty(navigator, "userAgent", {
+                value: USER_AGENTS.CHROME_MAC,
+                configurable: true,
+            })
+
+            // Mock getUserMedia for microphone permission
+            const mockGetUserMedia = vi.fn().mockResolvedValue({
+                getTracks: () => [{stop: vi.fn()}],
+            })
+
+            Object.defineProperty(navigator, "mediaDevices", {
+                value: {
+                    getUserMedia: mockGetUserMedia,
+                },
+                configurable: true,
+            })
+
+            // Mock SpeechRecognition constructor
+            class MockSpeechRecognition {
+                start = mockSpeechRecognition.start
+                stop = mockSpeechRecognition.stop
+                addEventListener = mockSpeechRecognition.addEventListener
+                removeEventListener = mockSpeechRecognition.removeEventListener
+            }
+
+            Object.defineProperty(win, "SpeechRecognition", {
+                value: MockSpeechRecognition,
+                configurable: true,
+            })
+
+            try {
+                renderChatCommonComponent()
+
+                const userInput = screen.getByPlaceholderText(CHAT_WITH_MATH_GUY)
+                const micButton = screen.getByTestId("microphone-button")
+
+                // Type some initial text
+                await user.click(userInput)
+                await user.paste("initial text")
+                expect(userInput).toHaveValue("initial text")
+
+                // Start voice recognition
+                await user.click(micButton)
+                expect(mockSpeechRecognition.start).toHaveBeenCalled()
+
+                // Simulate speech recognition providing a final transcript
+                const mockTranscript = "from voice recognition"
+                const mockAlternative: SpeechRecognitionAlternative = {
+                    confidence: 100,
+                    transcript: mockTranscript,
+                }
+
+                const mockResult: SpeechRecognitionResult = {
+                    length: 1,
+                    isFinal: true,
+                    item: () => mockAlternative,
+                    [Symbol.iterator]: Array.prototype[Symbol.iterator].bind([mockAlternative]),
+                    0: mockAlternative,
+                }
+
+                const mockResults: SpeechRecognitionResultList = {
+                    length: 1,
+                    item: () => mockResult,
+                    [Symbol.iterator]: Array.prototype[Symbol.iterator].bind([mockResult]),
+                    0: mockResult,
+                }
+
+                const mockEvent: SpeechRecognitionEvent = {
+                    resultIndex: 0,
+                    results: mockResults,
+                } as SpeechRecognitionEvent
+
+                // Trigger the onresult handler which should call handleVoiceTranscript
+                act(() => {
+                    if (mockSpeechRecognition.onresult) {
+                        mockSpeechRecognition.onresult(mockEvent)
+                    }
+                })
+
+                // The transcript should be appended to existing text with proper spacing
+                await waitFor(() => {
+                    expect(userInput).toHaveValue(`initial text ${mockTranscript}`)
+                })
+
+                // Test voice input on empty field (no extra space should be added)
+                await user.clear(userInput)
+
+                // Start voice recognition again and simulate new transcript
+                await user.click(micButton)
+
+                act(() => {
+                    if (mockSpeechRecognition.onresult) {
+                        const mockVoiceResult: Partial<SpeechRecognitionResult> = {
+                            length: 1,
+                            isFinal: true,
+                            item: () => ({confidence: 100, transcript: "standalone voice input"}),
+                            0: {confidence: 100, transcript: "standalone voice input"},
+                        }
+                        const mockVoiceResults: Partial<SpeechRecognitionResultList> = {
+                            length: 1,
+                            item: () => mockVoiceResult as SpeechRecognitionResult,
+                            0: mockVoiceResult as SpeechRecognitionResult,
+                        }
+                        const mockVoiceEvent: Partial<SpeechRecognitionEvent> = {
+                            resultIndex: 0,
+                            results: mockVoiceResults as SpeechRecognitionResultList,
+                        }
+                        mockSpeechRecognition.onresult(mockVoiceEvent as SpeechRecognitionEvent)
+                    }
+                })
+
+                // Should not add extra space when input is empty
+                await waitFor(() => {
+                    expect(userInput).toHaveValue("standalone voice input")
+                })
+            } finally {
+                // Cleanup: restore original values
+                if (originalSpeechRecognition !== undefined) {
+                    Object.defineProperty(win, "SpeechRecognition", {
+                        value: originalSpeechRecognition,
+                        configurable: true,
+                    })
+                } else {
+                    delete win.SpeechRecognition
+                }
+
+                Object.defineProperty(navigator, "userAgent", {
+                    value: originalUserAgent,
+                    configurable: true,
+                })
+            }
+        })
+    })
+
+    describe("Voice Input - interim results", () => {
+        it("Should show a spinner while speech is being processed", async () => {
+            const win = window as Window & {SpeechRecognition?: typeof SpeechRecognition}
+            const originalSpeechRecognition = win.SpeechRecognition
+            const originalUserAgent = navigator.userAgent
+            let resultHandler: ((event: SpeechRecognitionEvent) => void) | undefined
+
+            class MockSpeechRecognition {
+                start = vi.fn()
+                stop = vi.fn()
+                addEventListener = vi.fn((event: string, handler: (event: SpeechRecognitionEvent) => void) => {
+                    if (event === "result") {
+                        resultHandler = handler
+                    }
+                })
+                removeEventListener = vi.fn()
+            }
+
+            Object.defineProperty(win, "SpeechRecognition", {value: MockSpeechRecognition, configurable: true})
+            Object.defineProperty(navigator, "userAgent", {value: USER_AGENTS.CHROME_MAC, configurable: true})
+            Object.defineProperty(navigator, "mediaDevices", {
+                value: {getUserMedia: vi.fn().mockResolvedValue({getTracks: () => [{stop: vi.fn()}]})},
+                configurable: true,
+            })
+
+            try {
+                renderChatCommonComponent()
+                await user.click(screen.getByTestId("microphone-button"))
+
+                const interim = {isFinal: false, 0: {confidence: 1, transcript: "partial"}, length: 1}
+                act(() => {
+                    const event = {resultIndex: 0, results: {length: 1, 0: interim}}
+                    resultHandler?.(event as unknown as SpeechRecognitionEvent)
+                })
+
+                await screen.findByRole("progressbar")
+            } finally {
+                if (originalSpeechRecognition === undefined) {
+                    delete win.SpeechRecognition
+                } else {
+                    Object.defineProperty(win, "SpeechRecognition", {
+                        value: originalSpeechRecognition,
+                        configurable: true,
+                    })
+                }
+                Object.defineProperty(navigator, "userAgent", {value: originalUserAgent, configurable: true})
+            }
+        })
+    })
+
+    describe("Callbacks", () => {
+        it("Should handle onStreamingStarted and onStreamingComplete callbacks", async () => {
+            const mockOnStreamingStarted = vi.fn()
+            const mockOnStreamingComplete = vi.fn()
+
+            renderChatCommonComponent({
+                onStreamingStarted: mockOnStreamingStarted,
+                onStreamingComplete: mockOnStreamingComplete,
+            })
+
+            const testResponseText = "Test response"
+            const chatResponse: ChatResponse = {
+                response: {
+                    type: ChatMessageType.AGENT_FRAMEWORK,
+                    text: testResponseText,
+                },
+            }
+
+            mockSendChatQuery(({callback}) => {
+                callback(JSON.stringify(chatResponse))
+            })
+
+            await sendQuery(TEST_AGENT_MATH_GUY, "test query")
+
+            expect(mockOnStreamingStarted).toHaveBeenCalledTimes(1)
+            expect(mockOnStreamingComplete).toHaveBeenCalledTimes(1)
+        })
+
+        it("Should handle setPreviousResponse callback", async () => {
+            const mockSetPreviousResponse = vi.fn()
+
+            renderChatCommonComponent({
+                setPreviousResponse: mockSetPreviousResponse,
+            })
+
+            const testResponseText = "Test response for previous"
+            const chatResponse: ChatResponse = {
+                response: {
+                    type: ChatMessageType.AGENT_FRAMEWORK,
+                    text: testResponseText,
+                },
+            }
+
+            mockSendChatQuery(({callback}) => {
+                callback(JSON.stringify(chatResponse))
+            })
+
+            await sendQuery(TEST_AGENT_MATH_GUY, "test query")
+
+            await waitFor(() => {
+                expect(mockSetPreviousResponse).toHaveBeenCalledTimes(1)
+            })
+
+            // The response may contain additional elements, so just check it was called
+            expect(mockSetPreviousResponse).toHaveBeenCalledWith(TEST_AGENT_MATH_GUY, expect.any(String))
+        })
+
+        it("Should handle onSend callback that modifies query", async () => {
+            const mockOnSend = vi.fn((query: string) => `Modified: ${query}`)
+
+            renderChatCommonComponent({
+                onSend: mockOnSend,
+            })
+
+            const originalQuery = "original query"
+            const chatResponse: ChatResponse = {
+                response: {
+                    type: ChatMessageType.AGENT_FRAMEWORK,
+                    text: "response text",
+                },
+            }
+
+            mockSendChatQuery(({callback}) => {
+                callback(JSON.stringify(chatResponse))
+            })
+
+            await sendQuery(TEST_AGENT_MATH_GUY, originalQuery)
+
+            expect(mockOnSend).toHaveBeenCalledWith(originalQuery)
+        })
+    })
+
+    describe("Legacy Agent Support", () => {
+        it("Should handle extraParams for legacy agents", async () => {
+            const testExtraParams = {
+                customParam: "test value",
+                numericParam: 42,
+            }
+
+            renderChatCommonComponent({
+                selectedNetwork: LegacyAgentType.DataGenerator,
+                extraParams: testExtraParams,
+            })
+            mockSendChatQuery(({callback}) => {
+                callback("Legacy agent response")
+            })
+
+            await sendQuery(LegacyAgentType.DataGenerator, "test query")
+
+            // Verify sendLlmRequest was called with extraParams
+            // The legacyAgentEndpoint may be undefined if not provided
+            expect(sendLlmRequest).toHaveBeenCalledWith(
+                expect.any(Function),
+                expect.any(Object),
+                undefined,
+                testExtraParams,
+                expect.any(String),
+                expect.any(Array),
+                null,
+                StreamingUnit.Chunk
+            )
+        })
+
+        it("Should handle legacyAgentEndpoint for legacy agents", async () => {
+            const testEndpoint = "custom-legacy-endpoint"
+
+            renderChatCommonComponent({
+                selectedNetwork: LegacyAgentType.OpportunityFinder,
+                legacyAgentEndpoint: testEndpoint,
+            })
+
+            screen.getByText(LegacyAgentType.OpportunityFinder)
+            const responseChunk = "Legacy response with custom endpoint"
+            vi.mocked(sendLlmRequest).mockImplementation(
+                async (callback, _signal, fetchUrl, _params, _userQuery, _chatHistory, _userId, _streamingUnit) => {
+                    expect(fetchUrl).toBe(testEndpoint)
+                    callback(responseChunk)
+                }
+            )
+
+            await sendQuery(LegacyAgentType.OpportunityFinder, "test query")
+
+            const conversation = document.querySelector(`#${defaultProps.id}-conversation`)
+            within(conversation as HTMLElement).getByText(responseChunk)
+        })
+    })
+
+    describe("'Thinking' section", () => {
+        it("Should handle 'show thinking' section correctly", async () => {
+            renderChatCommonComponent()
+
+            // Send two responses, a regular AGENT one and an AGENT_FRAMEWORK one
+            const agentResponseText = "Sample Agent response"
+            const agentFrameworkResponse = "Sample agent framework response"
+            const responseMessages = [
+                getResponseMessage(ChatMessageType.AGENT, agentResponseText),
+                getResponseMessage(ChatMessageType.AGENT_FRAMEWORK, agentFrameworkResponse),
+            ]
+
+            // Chunk handler expects messages to be a JSON object with a "response" field
+            const chatResponses = responseMessages.map((response) => ({
+                response,
+            }))
+
+            mockSendChatQuery(({callback}) => {
+                callback(JSON.stringify(chatResponses[0]))
+                callback(JSON.stringify(chatResponses[1]))
+            })
+
+            await sendQuery(TEST_AGENT_MATH_GUY, "Sample test query handle thinking button test")
+
+            // Agent framework response is the "final answer" and should always be shown in the conversation section
+            const conversation = document.querySelector(`#${defaultProps.id}-conversation`)
+            within(conversation as HTMLElement).getByText(agentFrameworkResponse)
+
+            // Agent message should appear in the "thinking" section
+            const thinkingSection = document.querySelector(`#${defaultProps.id}-thinking`)
+            const item = within(thinkingSection as HTMLElement).getByText(new RegExp(agentResponseText, "u"))
+            expect(item).not.toBeVisible()
+
+            // Expand thinking section and verify agent message is visible
+            const expandButton = within(thinkingSection as HTMLElement).getByRole("button")
+            await user.click(expandButton)
+            expect(item).toBeVisible()
+        })
+    })
+
+    describe("sly_data handling", () => {
+        it("Should persist agent network definition to Zustand store when sly_data contains it", async () => {
+            act(() => {
+                useAgentChatHistoryStore.getState().resetHistory(TEST_AGENT_MATH_GUY)
+            })
+
+            const networkDefinition = [
+                {origin: "agent_a", tools: ["agent_b"], display_as: "llm_agent", instructions: "Do things."},
+            ]
+
+            const chatResponse: ChatResponse = {
+                response: {
+                    type: ChatMessageType.AGENT_FRAMEWORK,
+                    text: "",
+                    sly_data: {
+                        agent_network_definition: networkDefinition,
+                    },
+                },
+            }
+
+            renderChatCommonComponent()
+            mockSendChatQuery(({callback}) => {
+                callback(JSON.stringify(chatResponse))
+            })
+
+            await sendQuery(TEST_AGENT_MATH_GUY, "test query for sly_data network map")
+
+            let storedSlyData
+            await waitFor(() => {
+                storedSlyData = useAgentChatHistoryStore.getState().history[TEST_AGENT_MATH_GUY]?.slyData
+                expect(storedSlyData).toBeDefined()
+                expect(storedSlyData?.["agent_network_definition"]).toEqual(networkDefinition)
+            })
+            expect(storedSlyData).toHaveProperty("agent_network_definition")
+        })
+
+        it("Should accumulate sly_data from non-AGENT_FRAMEWORK messages", async () => {
+            act(() => {
+                useAgentChatHistoryStore.getState().resetHistory(TEST_AGENT_MATH_GUY)
+            })
+
+            renderChatCommonComponent()
+
+            const agentChunk: ChatResponse = {
+                response: {
+                    type: ChatMessageType.AGENT,
+                    text: "Agent thinking text",
+                    origin: [{tool: "agent_x", instantiation_index: 0}],
+                    sly_data: {some_custom_key: "some_value"},
+                },
+            }
+
+            mockSendChatQuery(({callback}) => {
+                callback(JSON.stringify(agentChunk))
+            })
+
+            // Should not throw. The AGENT message is rendered into the (hidden) thinking panel.
+            await sendQuery(TEST_AGENT_MATH_GUY, "test sly_data accumulation on AGENT message")
+
+            // sendChatQuery was called — the component processed the chunk without error
+            expect(sendChatQuery).toHaveBeenCalledTimes(1)
+        })
+
+        it("Should not persist echoed BYOK keys into the sly_data store", async () => {
+            act(() => {
+                useAgentChatHistoryStore.getState().resetHistory(TEST_AGENT_MATH_GUY)
+            })
+
+            renderChatCommonComponent()
+
+            const chunkWithSecret: ChatResponse = {
+                response: {
+                    type: ChatMessageType.AGENT_FRAMEWORK,
+                    text: "done",
+                    sly_data: {
+                        llm_config: {openai_api_key: "sk-should-never-persist"},
+                        running_cost: 3,
+                    },
+                },
+            }
+
+            mockSendChatQuery(({callback}) => {
+                callback(JSON.stringify(chunkWithSecret))
+            })
+
+            await sendQuery(TEST_AGENT_MATH_GUY, "query that echoes a secret")
+
+            await waitFor(() => {
+                const storedSlyData = useAgentChatHistoryStore.getState().history[TEST_AGENT_MATH_GUY]?.slyData
+                expect(storedSlyData).toEqual({running_cost: 3})
+            })
+        })
+
+        const openSlyDataEditor = async () => {
+            await user.click(screen.getByTestId("TuneIcon"))
+            await user.click(screen.getByRole("menuitem", {name: "Sly data..."}))
+            return screen.getByLabelText<HTMLTextAreaElement>("Sly data")
+        }
+
+        it("Should send sly_data edited in the editor with the next request", async () => {
+            act(() => {
+                useAgentChatHistoryStore.getState().resetHistory(TEST_AGENT_MATH_GUY)
+            })
+
+            renderChatCommonComponent()
+            mockSendChatQuery(({callback}) => {
+                callback(JSON.stringify({response: getResponseMessage(ChatMessageType.AGENT_FRAMEWORK, "done")}))
+            })
+
+            const editor = await openSlyDataEditor()
+            await user.clear(editor)
+            await user.click(editor)
+            await user.paste('{"seeded_by_user": "yes"}')
+            await user.click(screen.getByRole("button", {name: "Save"}))
+
+            await sendQuery(TEST_AGENT_MATH_GUY, "query after seeding sly_data")
+
+            // The user's value rides along with the entries the component always supplies (login).
+            expect(sendChatQuery).toHaveBeenCalledExactlyOnceWith(
+                undefined, // neuroSanURL is not set in these props
+                expect.any(AbortSignal),
+                "query after seeding sly_data",
+                TEST_AGENT_MATH_GUY,
+                expect.any(Function),
+                null, // no chat context yet: setSlyData initializes a fresh entry with null context
+                {login: TEST_USER, seeded_by_user: "yes"},
+                TEST_USER,
+                StreamingUnit.Line
+            )
+        })
+
+        it("Should show the sly_data currently in the store", async () => {
+            act(() => {
+                useAgentChatHistoryStore.getState().setSlyData(TEST_AGENT_MATH_GUY, {charges: 7})
+            })
+
+            renderChatCommonComponent()
+
+            expect(await openSlyDataEditor()).toHaveValue('{\n  "charges": 7\n}')
+        })
+
+        it("Should show the network's schema hints in the sly_data editor", async () => {
+            renderChatCommonComponent({
+                slyDataSchema: {
+                    properties: {x: {description: "The first operand", type: "float"}},
+                    required: ["x"],
+                    type: "object",
+                },
+            })
+
+            await openSlyDataEditor()
+
+            // getByText throws when the element is missing, so these are the assertions
+            screen.getByText(/This network expects/u)
+            screen.getByText(/\(float, required\)/u)
+        })
+
+        it("Should not offer the sly_data editor for legacy agents, which have no sly_data", async () => {
+            renderChatCommonComponent({selectedNetwork: LegacyAgentType.DataGenerator})
+
+            await user.click(screen.getByTestId("TuneIcon"))
+
+            expect(screen.queryByRole("menuitem", {name: "Sly data..."})).not.toBeInTheDocument()
+        })
+    })
+
+    describe("Chat Context Handling", () => {
+        it("Should correctly handle chat context", async () => {
+            const {
+                render: {rerender},
+            } = renderChatCommonComponent()
+
+            const responseMessage = getResponseMessage(ChatMessageType.AGENT_FRAMEWORK, "Sample AI response")
+
+            // Chunk handler expects messages in "wire" (snake case) format since that is how they come from Neuro-san.
+            const chatResponse = {response: responseMessage}
+
+            let sentChatContext: ChatContext | null = null
+
+            mockSendChatQuery(({callback, chatContext}) => {
+                callback(JSON.stringify(chatResponse))
+                sentChatContext = chatContext
+            })
+
+            const query = "Sample test query for chat context"
+            await sendQuery(TEST_AGENT_MATH_GUY, query)
+
+            // re-render to update chat_context ref
+            rerender(<ChatCommon {...defaultProps} />)
+            await sendQuery(TEST_AGENT_MATH_GUY, query)
+
+            //We should be sending back chat context as-is to the server to maintain conversation state
+            expect(sentChatContext).toEqual(responseMessage.chat_context)
+        })
+    })
+})

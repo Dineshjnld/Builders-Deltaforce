@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeltaSAN deployment console</title>
+<style>
+:root{color-scheme:dark;font:15px/1.45 Inter,"Segoe UI",sans-serif;color:#eff0f7;background:#141620}
+*{box-sizing:border-box}body{margin:0;padding:24px;max-width:1480px}h2,h3,p{margin:0 0 12px}h2{font-size:1.25rem}
+nav,.actions,.row,header{display:flex;align-items:center;gap:12px;flex-wrap:wrap}header{justify-content:space-between;margin-bottom:20px}
+a{color:#c5b4ff}button,input,select{font:inherit;background:#1b1d29;border:1px solid #414353;border-radius:6px;color:inherit;padding:8px 12px}
+button{cursor:pointer}button:hover{border-color:#a997ef}button:disabled{opacity:.55;cursor:wait}label{display:grid;gap:6px;font-size:.87rem;font-weight:600}
+form{display:grid;gap:16px;max-width:720px}.row>*{flex:1;min-width:170px}input{width:100%}.file{border:1px dashed #787391;border-radius:8px;padding:18px}.file input{background:transparent;border:0;padding-left:0}
+.primary{background:#6a4add;border-color:#967dea;color:white;font-weight:650}.muted,#message{color:#b7b7ce}#message{margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:.9rem}th,td{padding:12px 8px;border-bottom:1px solid #343543;text-align:left}th{color:#b8b8ca;font-size:.78rem}
+.scroll{overflow:auto}.status{border-radius:100px;padding:3px 9px;background:#353044;color:#dacbfd}.ready{color:#94e8c6;background:#193b33}
+.org{margin:20px 0;border:1px solid #403a57;padding:16px;border-radius:10px;background:#191a27}.nodes{display:flex;flex-wrap:wrap;gap:14px}
+.node{border-left:3px solid #a48bff;background:#242333;padding:12px;min-width:155px;border-radius:4px}.node small{display:block;color:#c6bfd5}
+[hidden]{display:none!important}nav{margin-bottom:20px}.toolbar{display:flex;gap:12px;margin-bottom:16px}.toolbar input{max-width:360px}
+@media(max-width:640px){body{padding:14px}th,td{padding:9px 5px}.row{align-items:stretch}}
+.map-area{background-color:#121421;background-image:radial-gradient(#37334b 1px,transparent 1px);background-size:19px 19px;border:1px solid #39364c;border-radius:10px;padding:18px;min-width:470px}
+.district{display:grid;grid-template-columns:minmax(110px,160px) 1fr;align-items:center;margin:8px 0 20px}
+.district h3{margin:0;padding:12px;text-align:center;background:#232133;border:1px solid #7869a9;border-radius:7px;font-size:.94rem}
+.branches{padding:0 0 0 26px;position:relative}.branch{position:relative;width:100%;padding:7px 0 7px 22px;border-left:1px solid #6b608f}
+.branch:before,.branches:before{content:"";position:absolute;top:50%;height:1px;background:#776a9d;width:22px;left:0}.branches:before{width:26px}
+.branch button{display:flex;align-items:center;gap:10px;background:#201e30;text-align:left;border:1px solid #48415d;max-width:100%;padding:8px 12px}
+.branch button[aria-pressed=true]{border-color:#b09af8;background:#322a4c}.signal{width:9px;height:9px;border-radius:50%;background:#aa91db;flex:none}.signal.ready{background:#77dcb7}
+.map-detail{margin-top:12px;padding:14px;background:#1d1d2b;border:1px solid #403b53;border-radius:8px}
+.map-detail header{margin:0 0 10px}.map-detail header strong{overflow-wrap:anywhere}.map-detail summary{cursor:pointer;color:#c5b4ff}.map-detail small{display:block;color:#c6bfd5;padding:2px 0}
+</style></head><body>
+<nav id="nav"><a href="#deploy">New deployment</a><a href="#map">Map</a><a href="#networks">Network list</a><a href="#directory">Manage deployments</a></nav>
+<section id="upload"><h2>Upload a network</h2><p class="muted">Deploy a portable HOCON file to the local DeltaSAN runtime.</p>
+<form id="form"><label class="file">Network definition<input required name="file" type="file" accept=".hocon,.conf,.json"></label>
+<div class="row"><label>Network name<input name="name" required maxlength="90" pattern="[A-Za-z0-9_ \-]+" placeholder="Meeting notes"></label>
+<label>Organization<input name="org_name" required maxlength="40" placeholder="Organization name"></label></div>
+<div><button class="primary">Deploy locally</button></div></form></section>
+<section id="browse" hidden><header><h2 id="heading"></h2><button id="refresh">Refresh</button></header>
+<div class="toolbar"><input aria-label="Search deployments" id="search" type="search" placeholder="Search networks or organizations"><select aria-label="Filter status" id="filter"><option value="">All statuses</option><option>ready</option><option>building</option><option>stopped</option><option>failed</option></select></div>
+<div class="scroll" id="results"></div></section>
+<p role="status" id="message"></p>
+<script>
+const byId = id => document.getElementById(id)
+const add = (parent, tag, text = '') => {
+    const el = document.createElement(tag)
+    el.textContent = text
+    parent.append(el)
+    return el
+}
+const form = byId('form'), message = byId('message'), rows = byId('results')
+let records = [], generation = 0, selectedMapNetwork = ''
+const view = () => location.hash.slice(1) || 'deploy'
+byId('nav').hidden = window.parent !== window
+form.elements.org_name.value = new URLSearchParams(location.search).get('org') || localStorage.getItem('delta-city-org') || ''
+form.elements.file.onchange = () => {
+    if (!form.elements.name.value && form.elements.file.files[0]) form.elements.name.value = form.elements.file.files[0].name.replace(/\.[^.]+$/, '').slice(0,90)
+}
+async function request(path, options) {
+    const r = await fetch(path, options)
+    const body = await r.json()
+    if (!r.ok) throw Error(body.detail || ('Server returned '+r.status))
+    return body
+}
+function openNetwork(parent, record) {
+    const link = add(parent, 'a', record.name)
+    link.href = record.url
+    link.target = '_blank'
+    link.rel = 'noopener'
+}
+function render() {
+    const term = byId('search').value.toLowerCase()
+    const status = byId('filter').value
+    const items = records.filter(r => (!status || r.status === status) && (r.name+' '+r.org_name).toLowerCase().includes(term))
+    rows.replaceChildren()
+    if (!items.length) { add(rows,'p',records.length ? 'No matching deployments.' : 'No networks have been deployed here yet.'); return }
+    if (view() === 'map') {
+        const canvas=add(rows,'div');canvas.className='map-area'
+        const selected=items.find(r=>r.id===selectedMapNetwork) || items[0]
+        for (const org of new Set(items.map(r => r.org_name))) {
+            const group=add(canvas,'section');group.className='district';add(group,'h3',org)
+            const nodes=add(group,'div');nodes.className='branches'
+            for (const r of items.filter(r => r.org_name === org)) {
+                const branch=add(nodes,'div');branch.className='branch'
+                const node=add(branch,'button');node.setAttribute('aria-pressed',String(r.id===selected.id))
+                add(node,'span').className='signal '+r.status
+                add(node,'strong',r.name);add(node,'small',r.status)
+                node.onclick=()=>{selectedMapNetwork=r.id;render()}
+            }
+        }
+        const detail=add(rows,'article');detail.className='map-detail'
+        const title=add(detail,'header');add(title,'strong',selected.name);const link=add(title,'a','Open network ↗')
+        link.href=selected.url;link.target='_blank';link.rel='noopener'
+        const edges=selected.connections || [], agents=new Set(selected.agents)
+        const routes=edges.filter(e=>agents.has(e.to)), tools=edges.filter(e=>!agents.has(e.to))
+        for (const e of routes) add(detail,'small',e.from+' → '+e.to)
+        if (!routes.length) add(detail,'small',selected.agents.join(' · '))
+        if(tools.length){const bindings=add(detail,'details');add(bindings,'summary','Connected tools ('+new Set(tools.map(e=>e.to)).size+')');for(const e of tools)add(bindings,'small',e.from+' → '+e.to)}
+        return
+    }
+    const table = add(rows,'table'), head = add(add(table,'thead'),'tr')
+    for (const label of ['Network','Organization','Status','Agents',...(view()==='directory' ? ['Actions'] : [])]) add(head,'th',label)
+    const body = add(table,'tbody')
+    for (const r of items) {
+        const tr=add(body,'tr'); openNetwork(add(tr,'td'),r); add(tr,'td',r.org_name)
+        const badge=add(add(tr,'td'),'span',r.status); badge.className='status '+r.status; add(tr,'td',String(r.agents.length))
+        if (view()==='directory') {
+            const cell=add(tr,'td'), button=add(cell,'button',r.enabled?'Stop':'Start')
+            button.onclick=async()=>{
+                button.disabled=true
+                try {await request('/deployments/'+encodeURIComponent(r.id)+'/'+(r.enabled?'unpublish':'publish'),{method:'POST'});await refresh()}
+                catch(e){message.textContent=e.message;button.disabled=false}
+            }
+        }
+    }
+}
+async function refresh() {
+    const id=++generation
+    try {const data=await request('/deployments'); if(id===generation && JSON.stringify(records)!==JSON.stringify(data.deployments)){records=data.deployments;render()}}
+    catch(e){if(id===generation)message.textContent=e.message}
+}
+function navigate() {
+    const key=view(), upload=key==='deploy'
+    byId('upload').hidden=!upload;byId('browse').hidden=upload
+    byId('heading').textContent=({map:'Deployment map',networks:'Network list',directory:'Manage deployments'})[key] || 'Network list'
+    message.textContent=''
+    if(!upload){render();refresh()}
+}
+form.onsubmit=async event=>{
+    event.preventDefault()
+    const button=form.querySelector('button');button.disabled=true
+    try {
+        const data=await request('/deployments',{method:'POST',body:new FormData(form)})
+        localStorage.setItem('delta-city-org',form.elements.org_name.value)
+        location.hash='networks';message.textContent='Registered '+data.name+'. Waiting for the runtime.'
+    } catch(e){message.textContent=e.message} finally {button.disabled=false}
+}
+byId('refresh').onclick=refresh;byId('search').oninput=render;byId('filter').onchange=render
+window.addEventListener('hashchange',navigate);navigate()
+setInterval(()=>{if(view()!=='deploy' && !document.hidden)refresh()},5000)
+</script></body></html>

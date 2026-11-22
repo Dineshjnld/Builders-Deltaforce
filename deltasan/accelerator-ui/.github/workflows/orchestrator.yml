@@ -1,0 +1,160 @@
+#    Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+#
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
+
+# ================================================================================
+# Orchestrator Workflow
+# ================================================================================
+# Purpose: Orchestrate the CI/CD flow based on trigger type
+#
+# Trigger Scenarios:
+# - Push to any branch: Runs tests only (for development feedback)
+# - Push to main branch: Runs test → build → deploy to dev
+# - Pull request to main: Runs tests only; supports fork PRs via workflow approval
+# - GitHub release: Runs test → build → deploy to staging → bump package.json
+# ================================================================================
+
+# Note: this is mostly copy-pasta from the same Action in neuro-ui :thumbsdown:
+# See: https://leaf-ai.atlassian.net/browse/UN-3573
+
+name: Orchestrator
+
+on:
+    # Trigger on pushes to any branch
+    push:
+        branches: ["**"]
+    # Trigger on pull requests targeting main, including updates from forks
+    pull_request:
+        types: [opened, synchronize, reopened]
+        branches:
+            - main
+    # Trigger on GitHub release events
+    release:
+        types: [published]
+
+# Minimal default permissions; jobs that need extra permissions override below.
+permissions:
+    contents: read
+
+jobs:
+    setup:
+        runs-on: ubuntu-latest
+        outputs:
+            version: ${{ steps.version.outputs.version }}
+            deploy_env: ${{ steps.version.outputs.deploy_env }}
+            should_build: ${{ steps.version.outputs.should_build }}
+            should_deploy: ${{ steps.version.outputs.should_deploy }}
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  fetch-depth: 0
+
+            - name: Determine version and deployment environment
+              id: version
+              shell: bash
+              run: |
+                  ./build_scripts/determine_version.sh \
+                    "${{ github.event_name }}" \
+                    "${{ github.ref }}" \
+                    "${{ github.event.release.tag_name }}" \
+                    "${{ github.sha }}"
+
+    # Step 1: Run tests on pushes, releases, and fork pull requests
+    test:
+        if: >
+            github.event_name == 'push' ||
+            github.event_name == 'release' ||
+            (github.event_name == 'pull_request' &&
+             github.event.pull_request.head.repo.full_name != github.repository)
+        uses: ./.github/workflows/test.yml
+        needs: setup
+        with:
+            revision: ${{ github.ref }}
+
+    # Step 2: Build Docker image (only for main/release)
+    build:
+        permissions:
+            id-token: write
+            contents: read
+        uses: ./.github/workflows/build.yml
+        needs: [setup, test]
+        if: needs.test.result == 'success' && needs.setup.outputs.should_build == 'true'
+        with:
+            revision: ${{ github.ref }}
+            DISPLAY_VERSION: ${{ needs.setup.outputs.version }}
+            is_release: ${{ github.event_name == 'release' }}
+
+    # Step 3: Deploy to environment (only for main/release)
+    # Triggers neuro-san-deploy to update the UI image tag in the target environment
+    deploy:
+        runs-on: ubuntu-latest
+        needs: [setup, build]
+        if: needs.build.result == 'success' && needs.setup.outputs.should_deploy == 'true'
+        steps:
+            - name: Trigger deployment to neuro-san-deploy
+              uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # v3
+              with:
+                  token: ${{ secrets.NEURO_SAN_DEPLOY_DISPATCH_TOKEN }}
+                  repository: cognizant-ai-lab/neuro-san-deploy
+                  event-type: ui_deploy
+                  client-payload: |
+                      {
+                        "source_repo": "${{ github.repository }}",
+                        "ref": "${{ github.ref_name }}",
+                        "sha": "${{ github.sha }}",
+                        "target_environment": "${{ needs.setup.outputs.deploy_env }}",
+                        "image_tag": "${{ needs.build.outputs.image_tag }}",
+                        "sender": "${{ github.actor }}"
+                      }
+
+    # Step 4: Bump package.json version on main after a release
+    # Uses [skip ci] in the commit message so the resulting push does not re-trigger workflows.
+    bump-version:
+        runs-on: ubuntu-latest
+        needs: [setup, deploy]
+        if: github.event_name == 'release'
+        permissions:
+            contents: write
+        concurrency:
+            group: bump-version-main
+            cancel-in-progress: false
+        steps:
+            - name: Checkout main branch
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  ref: main
+                  token: ${{ secrets.NEURO_SAN_DEPLOY_DISPATCH_TOKEN }}
+
+            - name: Update package.json to release version
+              run: |
+                  ./build_scripts/set_package_version.sh \
+                    packages/ui-common/package.json \
+                    "${{ needs.setup.outputs.version }}"
+
+            - name: Commit and push if changed
+              run: |
+                  git config user.name "${{ vars.ACTIONS_BOT_NAME }}"
+                  git config user.email "${{ vars.ACTIONS_BOT_EMAIL }}"
+                  git add packages/ui-common/package.json
+                  if git diff --cached --quiet; then
+                      echo "No version change needed."
+                  else
+                      git commit -m "Bump ui-common version to ${{ needs.setup.outputs.version }} [skip ci]" \
+                        -m "CI skipped: version-only change already validated by the release pipeline."
+                      git pull --ff-only origin main || {
+                          echo "::error::Cannot fast-forward; main has diverged. Manual intervention needed."
+                          exit 1
+                      }
+                      git push origin main
+                  fi

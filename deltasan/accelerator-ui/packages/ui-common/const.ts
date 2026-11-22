@@ -1,0 +1,37 @@
+/*
+Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Name to use for application
+export const LOGO: string = "DeltaForce"
+
+export const NEURO_SAN_UI_VERSION = process.env["NEXT_PUBLIC_NEURO_SAN_UI_VERSION"] ?? "Unknown Version"
+
+export const getContactUsConfirmationText = (email: string): string =>
+    "Would you like to send the DeltaForce support team an email? " +
+    "You will need to have an email client installed on your device in order " +
+    "to continue. If you don't have an email client, you can still contact us at " +
+    `${email} using a web based email client.`
+
+/**
+ * The default username to use when the user is not authenticated or does not have a name available, or when
+ * auentication is disabled
+ */
+export const DEFAULT_USERNAME = "Guest"
+
+/**
+ * The default user image to use when the user does not have a profile picture.
+ */
+export const DEFAULT_USER_IMAGE = "https://www.gravatar.com/avatar/?d=mp"

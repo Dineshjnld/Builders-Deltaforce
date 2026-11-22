@@ -1,0 +1,175 @@
+/*
+Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+import httpStatus from "http-status"
+import {createMocks} from "node-mocks-http"
+
+import {withStrictMocks} from "../../../../../../__tests__/common/strictMocks"
+import {
+    ENABLE_AUTHENTICATION_ENV_VAR,
+    ENABLE_GOOGLE_ANALYTICS_ENV_VAR,
+    ENABLE_PUBLISHING_ENV_VAR,
+    GA_MEASUREMENT_ID_ENV_VAR,
+    PUBLISH_SERVER_URL_ENV_VAR,
+} from "../../../../Const"
+import handler from "../../../../pages/api/environment"
+import {EnvironmentResponse} from "../../../../pages/api/environment/Types"
+
+describe("Environment API handler", () => {
+    withStrictMocks()
+
+    const originalEnv = process.env
+
+    beforeEach(() => {
+        // Reset environment variables before each test
+        process.env = {...originalEnv}
+    })
+
+    afterEach(() => {
+        // Restore original environment
+        process.env = originalEnv
+    })
+
+    it("returns environment variables when all are set", () => {
+        // Set up environment variables
+        process.env["NEURO_SAN_SERVER_URL"] = "https://api.example.com"
+        process.env["AUTH0_CLIENT_ID"] = "test-client-id"
+        process.env["AUTH0_DOMAIN"] = "test-domain.auth0.com"
+        process.env["SUPPORT_EMAIL_ADDRESS"] = "support@example.com"
+        process.env["LOGO_SERVICE_TOKEN"] = "test-logo-service-token"
+        process.env[ENABLE_AUTHENTICATION_ENV_VAR] = "true"
+        process.env[ENABLE_GOOGLE_ANALYTICS_ENV_VAR] = "true"
+        process.env["GA_MEASUREMENT_ID"] = "test-ga-id"
+        process.env[ENABLE_PUBLISHING_ENV_VAR] = "true"
+        process.env[PUBLISH_SERVER_URL_ENV_VAR] = "https://publish.example.com"
+
+        const {req, res} = createMocks()
+
+        handler(req, res)
+
+        expect(res._getStatusCode()).toBe(httpStatus.OK)
+        expect(res._getHeaders()["content-type"]).toBe("application/json")
+        expect(res._getJSONData()).toEqual<EnvironmentResponse>({
+            auth0ClientId: "test-client-id",
+            auth0Domain: "test-domain.auth0.com",
+            backendNeuroSanApiUrl: "https://api.example.com",
+            enableAuthentication: true,
+            enableGoogleAnalytics: true,
+            enablePublishing: true,
+            gaMeasurementID: "test-ga-id",
+            logoServiceToken: "test-logo-service-token",
+            publishServerUrl: "https://publish.example.com",
+            supportEmailAddress: "support@example.com",
+        } satisfies Required<EnvironmentResponse>)
+    })
+
+    it("returns expected values for unset environment variables", () => {
+        // Only set some environment variables
+        process.env["NEURO_SAN_SERVER_URL"] = "https://api.example.com"
+        // Leave others undefined
+        delete process.env["AUTH0_CLIENT_ID"]
+        delete process.env["AUTH0_DOMAIN"]
+        delete process.env["SUPPORT_EMAIL_ADDRESS"]
+        delete process.env["LOGO_SERVICE_TOKEN"]
+        delete process.env[ENABLE_AUTHENTICATION_ENV_VAR]
+        delete process.env[PUBLISH_SERVER_URL_ENV_VAR]
+        delete process.env[ENABLE_GOOGLE_ANALYTICS_ENV_VAR]
+        delete process.env["GA_MEASUREMENT_ID"]
+
+        const {req, res} = createMocks()
+
+        handler(req, res)
+
+        expect(res._getStatusCode()).toBe(httpStatus.OK)
+        expect(res._getJSONData()).toEqual<EnvironmentResponse>({
+            backendNeuroSanApiUrl: "https://api.example.com",
+            auth0ClientId: undefined,
+            auth0Domain: undefined,
+            enableAuthentication: true, // defaults to true if not set
+            enableGoogleAnalytics: false, // defaults to false if not set
+            enablePublishing: false, // defaults to false if not set
+            gaMeasurementID: undefined,
+            supportEmailAddress: undefined,
+            logoServiceToken: undefined,
+            publishServerUrl: undefined,
+        } satisfies Required<EnvironmentResponse>)
+    })
+
+    it("handles empty environment variables", () => {
+        // Set empty string values
+        process.env["NEURO_SAN_SERVER_URL"] = ""
+        process.env["AUTH0_CLIENT_ID"] = ""
+        process.env["AUTH0_DOMAIN"] = ""
+        process.env["SUPPORT_EMAIL_ADDRESS"] = ""
+        process.env["LOGO_SERVICE_TOKEN"] = ""
+        process.env[ENABLE_AUTHENTICATION_ENV_VAR] = ""
+        process.env[ENABLE_GOOGLE_ANALYTICS_ENV_VAR] = ""
+        process.env["GA_MEASUREMENT_ID"] = ""
+        process.env[PUBLISH_SERVER_URL_ENV_VAR] = ""
+
+        const {req, res} = createMocks()
+
+        handler(req, res)
+
+        expect(res._getStatusCode()).toBe(httpStatus.OK)
+        expect(res._getJSONData()).toEqual<EnvironmentResponse>({
+            auth0ClientId: "",
+            auth0Domain: "",
+            backendNeuroSanApiUrl: "",
+            enableAuthentication: true, // defaults to true if not set
+            enableGoogleAnalytics: false, // defaults to false if not set
+            enablePublishing: false, // defaults to false if not set
+            gaMeasurementID: "",
+            logoServiceToken: "",
+            publishServerUrl: "",
+            supportEmailAddress: "",
+        } satisfies Required<EnvironmentResponse>)
+    })
+
+    it("ignores request method and body", () => {
+        // Set up environment variables
+        process.env["NEURO_SAN_SERVER_URL"] = "https://api.example.com"
+        delete process.env["AUTH0_CLIENT_ID"]
+        delete process.env["AUTH0_DOMAIN"]
+        delete process.env["LOGO_SERVICE_TOKEN"]
+        delete process.env["SUPPORT_EMAIL_ADDRESS"]
+        delete process.env[ENABLE_GOOGLE_ANALYTICS_ENV_VAR]
+        delete process.env[GA_MEASUREMENT_ID_ENV_VAR]
+        delete process.env[ENABLE_AUTHENTICATION_ENV_VAR]
+        delete process.env[PUBLISH_SERVER_URL_ENV_VAR]
+
+        const {req, res} = createMocks({
+            method: "POST",
+            body: {someData: "test"},
+        })
+
+        handler(req, res)
+
+        expect(res._getStatusCode()).toBe(httpStatus.OK)
+        expect(res._getJSONData()).toEqual<EnvironmentResponse>({
+            auth0ClientId: undefined,
+            auth0Domain: undefined,
+            backendNeuroSanApiUrl: "https://api.example.com",
+            enableAuthentication: true, // defaults to true if not set
+            enableGoogleAnalytics: false, // defaults to false if not set
+            enablePublishing: false, // defaults to false if not set
+            gaMeasurementID: undefined,
+            logoServiceToken: undefined,
+            publishServerUrl: undefined,
+            supportEmailAddress: undefined,
+        } satisfies Required<EnvironmentResponse>)
+    })
+})

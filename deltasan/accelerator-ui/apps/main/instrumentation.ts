@@ -1,0 +1,120 @@
+/*
+Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+/**
+ * This file executes at Next.js startup. It is intended for injecting instrumentation and monitoring but here
+ * we are using it to check that the environment variables are set correctly.
+ *
+ * @see https://nextjs.org/docs/app/guides/instrumentation
+ */
+
+import {
+    ENABLE_AUTHENTICATION_ENV_VAR,
+    ENABLE_GOOGLE_ANALYTICS_ENV_VAR,
+    ENABLE_PUBLISHING_ENV_VAR,
+    GA_MEASUREMENT_ID_ENV_VAR,
+    PUBLISH_BEARER_TOKEN_ENV_VAR,
+    PUBLISH_SERVER_URL_ENV_VAR,
+} from "./Const"
+
+/**
+ * List of environment variables that are required for the app to run. If any of these are not set, the app will
+ * exit with an error message.
+ */
+export const REQUIRED_ENV_VARS = ["NEURO_SAN_SERVER_URL", "SUPPORT_EMAIL_ADDRESS"]
+
+export const REQUIRED_FOR_AUTH_ENV_VARS = [
+    "AUTH0_CLIENT_ID",
+    "AUTH0_CLIENT_SECRET",
+    "AUTH0_DOMAIN",
+    "AUTH0_ISSUER",
+    "NEXTAUTH_SECRET",
+    "NEXTAUTH_URL",
+]
+
+/**
+ * List of environment variables that are optional. If any of these are not set, the app will log a warning but will
+ * continue to run. These are typically used for optional features that have a fallback if the env var is not set.
+ */
+export const OPTIONAL_ENV_VARS = ["LOGO_SERVICE_TOKEN", "OPENAI_API_KEY"]
+
+/**
+ * Check if an environment variable is "missing" (undefined or empty string).
+ * @param envVar - The name of the environment variable to check.
+ * @returns true if the environment variable is missing, false otherwise.
+ */
+const isMissing = (envVar: string) => !process.env[envVar]?.trim()
+
+export const register = () => {
+    // Always required env vars
+    const missingEnvVars = REQUIRED_ENV_VARS.filter((envVar) => isMissing(envVar))
+    if (missingEnvVars.length > 0) {
+        throw new Error(`The following environment variable(s) are empty or undefined:\n${missingEnvVars.join("\n")}`)
+    }
+
+    // Conditionally required env vars
+    const enableAuthentication = process.env[ENABLE_AUTHENTICATION_ENV_VAR] !== "false"
+    if (enableAuthentication) {
+        const missingRequiredForAuthEnvVars = REQUIRED_FOR_AUTH_ENV_VARS.filter((envVar) => isMissing(envVar))
+        if (missingRequiredForAuthEnvVars.length > 0) {
+            throw new Error(
+                "The following environment variable(s) are required for authentication " +
+                    `but are empty or undefined:\n${missingRequiredForAuthEnvVars.join("\n")}`
+            )
+        }
+    }
+
+    // Check Google Analytics env vars for consistency.
+    const enableGoogleAnalytics = process.env[ENABLE_GOOGLE_ANALYTICS_ENV_VAR] === "true"
+    if (enableGoogleAnalytics && isMissing(GA_MEASUREMENT_ID_ENV_VAR)) {
+        throw new Error(
+            `Google Analytics is enabled (${ENABLE_GOOGLE_ANALYTICS_ENV_VAR} is true) but the ${
+                GA_MEASUREMENT_ID_ENV_VAR
+            } environment variable is empty or undefined. ` +
+                "Please set the GA_MEASUREMENT_ID environment variable to your Google Analytics Measurement ID."
+        )
+    }
+
+    // Publishing sends every request to the publish server with this token
+    const enablePublishing = process.env[ENABLE_PUBLISHING_ENV_VAR] === "true"
+    if (enablePublishing && isMissing(PUBLISH_BEARER_TOKEN_ENV_VAR)) {
+        throw new Error(
+            `Publishing is enabled (${ENABLE_PUBLISHING_ENV_VAR} is true) but the ${
+                PUBLISH_BEARER_TOKEN_ENV_VAR
+            } environment variable is empty or undefined.`
+        )
+    }
+
+    // Optional env vars
+    const missingOptionalEnvVars = OPTIONAL_ENV_VARS.filter((envVar) => isMissing(envVar))
+    if (missingOptionalEnvVars.length > 0) {
+        console.warn(
+            "Warning: The following optional environment variable(s) are empty or undefined. " +
+                `Some features may not work correctly:\n${missingOptionalEnvVars.join("\n")}`
+        )
+    }
+
+    console.info("Start-up: Environment variables checked successfully.")
+    console.info("Authentication enabled:", enableAuthentication)
+    console.info("Google Analytics enabled:", enableGoogleAnalytics)
+    console.info("Google Analytics Measurement ID:", process.env[GA_MEASUREMENT_ID_ENV_VAR] || "not set")
+    console.info("OpenAI API key:", process.env["OPENAI_API_KEY"] ? "set" : "not set")
+    console.info("Logo service token:", process.env["LOGO_SERVICE_TOKEN"] ? "set" : "not set")
+    console.info("Neuro SAN server URL:", process.env["NEURO_SAN_SERVER_URL"])
+    console.info("Publishing enabled:", enablePublishing)
+    console.info("Publish server URL:", process.env[PUBLISH_SERVER_URL_ENV_VAR] || "not set")
+    console.info("Publish bearer token:", process.env[PUBLISH_BEARER_TOKEN_ENV_VAR] ? "set" : "not set")
+}

@@ -1,0 +1,1506 @@
+/*
+Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+/**
+ * See main function description.
+ */
+import {AIMessage, HumanMessage} from "@langchain/core/messages"
+import AddBoxRounded from "@mui/icons-material/AddBoxRounded"
+import ClearIcon from "@mui/icons-material/Clear"
+import CloseIcon from "@mui/icons-material/Close"
+import DataObjectIcon from "@mui/icons-material/DataObject"
+import TuneIcon from "@mui/icons-material/Tune"
+import Box from "@mui/material/Box"
+import Checkbox from "@mui/material/Checkbox"
+import CircularProgress from "@mui/material/CircularProgress"
+import IconButton from "@mui/material/IconButton"
+import Input from "@mui/material/Input"
+import InputAdornment from "@mui/material/InputAdornment"
+import ListItemIcon from "@mui/material/ListItemIcon"
+import ListItemText from "@mui/material/ListItemText"
+import Menu from "@mui/material/Menu"
+import MenuItem from "@mui/material/MenuItem"
+import {keyframes, useTheme} from "@mui/material/styles"
+import Typography from "@mui/material/Typography"
+import {isEmpty} from "lodash-es"
+import {motion} from "motion/react"
+import {
+    CSSProperties,
+    Dispatch,
+    ReactNode,
+    Ref,
+    SetStateAction,
+    useCallback,
+    useEffect,
+    useImperativeHandle,
+    useMemo,
+    useRef,
+    useState,
+} from "react"
+import {v4 as uuid} from "uuid"
+
+import {ChatHistory, toTurns} from "./ChatHistory"
+import {MAX_TURNS, SLY_DATA_LOGIN_KEY} from "./Const"
+import {ControlButtons} from "./ControlButtons"
+import {Conversation} from "./Conversation"
+import {ConversationTurn, MessageRole} from "./ConversationTurn"
+import {SampleQueries} from "./SampleQueries"
+import {SendButton} from "./SendButton"
+import {SlyDataDialog} from "./SlyDataDialog"
+import {Thinking} from "./Thinking"
+import {sendChatQuery} from "../../../controller/agent/Agent"
+import {sendLlmRequest, StreamingUnit} from "../../../controller/llm/LlmChat"
+import {ChatMessage, ChatMessageType} from "../../../generated/neuro-san/NeuroSanClient"
+import {useAgentChatHistoryStore} from "../../../state/ChatHistory"
+import {useSettingsStore} from "../../../state/Settings"
+import {
+    getSheen,
+    glassSurface,
+    glowShadow,
+    gradientBorder,
+    gradientText,
+    SHEEN_EASE,
+    SHEEN_RADIUS,
+    SHEEN_RADIUS_SURFACE,
+    sheenConic,
+    spinningBorder,
+} from "../../../Theme/sheen"
+import {toDisplayName} from "../../../utils/AgentName"
+import {downloadFile, toSafeFilename} from "../../../utils/File"
+import {hasOnlyWhitespace} from "../../../utils/text"
+import {getZIndex} from "../../../utils/zIndexLayers"
+import {ConfirmationModal} from "../../Common/ConfirmationModal"
+import {AGENT_NETWORK_DESIGNER_ID} from "../../MultiAgentAccelerator/const"
+import {CombinedAgentType, givesFinalAnswer, isLegacyAgentType} from "../Common/Types"
+import {chatMessageFromChunk, checkError} from "../Common/Utils"
+import {MicrophoneButton} from "../VoiceChat/MicrophoneButton"
+import {cleanupAndStopSpeechRecognition, setupSpeechRecognition, SpeechRecognitionState} from "../VoiceChat/VoiceChat"
+
+//#region Types and Interfaces
+export interface ChatCommonProps {
+    /**
+     * HTML id to use for the outer component
+     */
+    readonly id: string
+
+    /**
+     * The current username of the logged-in user. Used for fetching things from APIs mainly
+     */
+    readonly currentUser: string
+
+    /**
+     * Function to set the state of the component to indicate whether we are awaiting a response from the LLM
+     */
+    readonly setIsAwaitingLlm: Dispatch<SetStateAction<boolean>>
+
+    /**
+     * Whether we are currently awaiting a response from the LLM
+     */
+    readonly isAwaitingLlm: boolean
+
+    /**
+     * The network to send the request to.
+     */
+    readonly selectedNetwork: string | null
+
+    /**
+     * Setter for changing the selected network.
+     */
+    readonly setSelectedNetwork?: (network: string | null) => void
+
+    /**
+     * Special endpoint for legacy agents since they do not have a single unified endpoint like Neuro-san agents.
+     */
+    readonly legacyAgentEndpoint?: string
+
+    /**
+     * Optional extra callback for containers to do extra things with the chunks as they are received. Parent
+     * returns true if it believes the chunk indicates that the interaction with the agent was successful and no
+     * retries are necessary.
+     */
+    readonly onChunkReceived?: (chunk: string) => boolean
+
+    /**
+     * Will be called when the streaming is started, before any chunks are received.
+     */
+    readonly onStreamingStarted?: () => void
+
+    /**
+     * Will be called when the streaming is complete, whatever the reason for termination (normal or error)
+     */
+    readonly onStreamingComplete?: () => void
+
+    /**
+     * Optional callback to modify the query before sending it to the server. This is useful for adding extra
+     * information to the query before sending it or totally modifying the user query before sending.
+     */
+    readonly onSend?: (query: string) => string
+
+    /**
+     * Lifted state for parent to manage the previous response from the agent.
+     */
+    readonly setPreviousResponse?: (agent: CombinedAgentType, response: string) => void
+
+    /**
+     * Optional placeholders for input to agents.
+     */
+    readonly agentPlaceholders?: Partial<Record<CombinedAgentType, string>>
+
+    /**
+     * Optional greetings for specific agents to display
+     */
+    readonly customAgentGreetings?: Partial<Record<CombinedAgentType, string>>
+
+    /**
+     * Extra parameters to send to the server to be forwarded to the agent or used by the server.
+     * @note This is only used for legacy agents to aid in UI consolidation, only Neuro-san agents.
+     */
+    readonly extraParams?: Record<string, unknown>
+
+    /**
+     * Background color for the chat window. Helps when there are multiple chats on a single page.
+     */
+    readonly backgroundColor?: string
+
+    /**
+     * If present, the chat window will have a title bar with this title.
+     */
+    readonly title?: string
+
+    /**
+     * If present, the chat window will have a close button that will call this function when clicked.
+     */
+    readonly onClose?: () => void
+
+    /**
+     * The neuro-san server URL
+     */
+    readonly neuroSanURL?: string
+
+    /**
+     * Extra sly_data entries to merge into each outgoing request. Used by parent components (e.g. temp networks)
+     * to re-supply data that lives outside the IndexedDB slyData store (e.g. localStorage).
+     */
+    readonly extraSlyData?: Record<string, unknown>
+
+    /**
+     * Optional description of the network to display in the UI.
+     */
+    readonly networkDescription?: string
+
+    /**
+     * Sample queries for the current network that the user can "click to send"
+     */
+    readonly sampleQueries?: string[]
+
+    /**
+     * If true, indicates that the user is missing API keys for one or more LLM providers.
+     */
+    readonly hasMissingApiKeys?: boolean
+
+    /**
+     * The sly_data_schema the selected network's front man advertises, if any. Enables schema hints in the
+     * sly_data dialog.
+     */
+    readonly slyDataSchema?: Record<string, unknown>
+}
+
+// Type for forward ref to expose the handleStop and handleClearChat functions
+export type ChatCommonHandle = {
+    handleStop: () => void
+    handleClearChat: () => void
+}
+
+//#endregion Types and Interfaces
+
+//#region Constants
+
+// Define fancy EMPTY constant to avoid linter error about using object literals as default props
+const EMPTY: Partial<Record<CombinedAgentType, string>> = {}
+
+// How many times to retry the entire agent interaction process. Some networks have a well-defined success condition.
+// For others, it's just "whenever the stream is done".
+const MAX_AGENT_RETRIES = 3
+
+// Keep long prompts navigable without allowing the input to take over the chat window.
+const MAX_CHAT_INPUT_ROWS = 8
+
+/**
+ * Extract the final answer from the response from a legacy agent
+ * @param response The response from the legacy agent
+ * @returns The final answer from the agent, if it exists or undefined if it doesn't
+ */
+const extractFinalAnswer = (response: string) =>
+    /Final Answer: (?<finalAnswerText>.*)/su.exec(response)?.groups?.["finalAnswerText"]
+
+// List of message roles that are exported when saving chat history.
+const EXPORTED_MESSAGE_TYPES = [MessageRole.User, MessageRole.FinalAnswer, MessageRole.Warning, MessageRole.Error]
+
+const EXPORT_ROLE_LABELS: Record<MessageRole, string> = {
+    [MessageRole.User]: "User",
+    [MessageRole.Agent]: "Assistant",
+    [MessageRole.FinalAnswer]: "Assistant",
+    [MessageRole.Warning]: "Warning",
+    [MessageRole.Error]: "Error",
+}
+
+//#endregion Constants
+
+/**
+ * Helper function to convert a message role to a label for exporting chat history.
+ * @param role The message role to convert
+ * @returns The label for the message role
+ */
+export const roleToExportLabel = (role: MessageRole): string => EXPORT_ROLE_LABELS[role]
+
+// Radius of the chat input pill (large enough to stay fully rounded as the input grows to several rows)
+const INPUT_PILL_RADIUS = 28
+
+// The "thinking" orb: an iridescent blob that slowly morphs its outline and breathes
+const ORB_MORPH = keyframes`
+    0%, 100% { border-radius: 50% 50% 50% 50% / 50% 50% 50% 50%; transform: scale(1); }
+    25% { border-radius: 58% 42% 55% 45% / 46% 58% 42% 54%; transform: scale(1.08); }
+    50% { border-radius: 44% 56% 42% 58% / 56% 44% 56% 44%; transform: scale(0.94); }
+    75% { border-radius: 52% 48% 60% 40% / 40% 56% 44% 60%; transform: scale(1.05); }
+`
+
+// Size of the thinking orb (px)
+const ORB_SIZE = 22
+
+/**
+ * Common chat component for agent chat. This component is used by all agent chat components to provide a consistent
+ * experience for users when chatting with agents. It handles user input as well as displaying and nicely formatting
+ * agent responses. Customization for inputs and outputs is provided via event handlers-like props.
+ */
+export const ChatCommon = ({ref, ...props}: ChatCommonProps & {ref?: Ref<ChatCommonHandle>}) => {
+    const {
+        agentPlaceholders = EMPTY,
+        backgroundColor,
+        currentUser,
+        customAgentGreetings = EMPTY,
+        extraParams,
+        extraSlyData,
+        id,
+        isAwaitingLlm,
+        legacyAgentEndpoint,
+        hasMissingApiKeys = false,
+        networkDescription,
+        neuroSanURL,
+        onChunkReceived,
+        onClose,
+        onSend,
+        onStreamingComplete,
+        onStreamingStarted,
+        sampleQueries,
+        selectedNetwork,
+        setIsAwaitingLlm,
+        setPreviousResponse,
+        setSelectedNetwork,
+        slyDataSchema,
+        title,
+    } = props
+    // MUI theme
+    const theme = useTheme()
+
+    // User LLM chat input
+    const [chatInput, setChatInput] = useState<string>("")
+
+    // Previous user query (for "regenerate" feature)
+    const [previousUserQuery, setPreviousUserQuery] = useState<string>("")
+
+    // Turns within the current conversation
+    const [turns, setTurns] = useState<ConversationTurn[]>([])
+
+    // To accumulate current response, which will be different from the contents of the output window if there is a
+    // chat session
+    const currentResponse = useRef<string>("")
+
+    // Ref for output text area, so we can auto scroll it
+    const chatOutputRef = useRef(null)
+
+    // Ref for user input text area, so we can handle shift-enter
+    const chatInputRef = useRef(null)
+
+    // Controller for cancelling fetch request
+    const controller = useRef<AbortController>(null)
+
+    // For tracking if we're auto-scrolling. A button allows the user to enable or disable auto-scrolling.
+    const [autoScrollEnabled, setAutoScrollEnabled] = useState<boolean>(true)
+
+    // Whether to wrap output text
+    const [shouldWrapOutput, setShouldWrapOutput] = useState<boolean>(true)
+
+    // Options menu control
+    const [optionsMenuAnchorEl, setOptionsMenuAnchorEl] = useState<null | HTMLElement>(null)
+    const [optionsMenuOpen, setOptionsMenuOpen] = useState<boolean | undefined>(false)
+
+    // Whether the sly_data editor is showing
+    const [slyDataDialogOpen, setSlyDataDialogOpen] = useState<boolean>(false)
+
+    // Persistent agent chat history store, which is where we store both kinds of chat histories
+    // (see store implementation for details)
+    const storedChatHistory = useAgentChatHistoryStore((state) =>
+        selectedNetwork ? state?.history?.[selectedNetwork] : undefined
+    )
+
+    const agentChatHistory = useMemo(
+        () => storedChatHistory ?? {chatHistory: [], chatContext: null, slyData: {}},
+        [storedChatHistory]
+    )
+
+    // For saving chat history. Specifically, exclude "Agent" messages as they are verbose and not useful in a saved
+    // export.
+    const exportableTurns = turns.filter((turn) => EXPORTED_MESSAGE_TYPES.includes(turn.role))
+    const enableSaveChatButton = turns.length > 0 || agentChatHistory?.chatHistory?.length > 0
+
+    // Display option for agent/network names
+    const useNativeNames = useSettingsStore((state) => state.settings.appearance.useNativeNames)
+
+    // Access store for context items
+    const updateChatContext = useAgentChatHistoryStore((state) => state.updateChatContext)
+    const updateChatHistory = useAgentChatHistoryStore((state) => state.updateChatHistory)
+    const updateSlyData = useAgentChatHistoryStore((state) => state.updateSlyData)
+    const resetHistory = useAgentChatHistoryStore((state) => state.resetHistory)
+
+    // Ref copy of current turns, so we can safely use it in callbacks without worrying about stale closures
+    const turnsRef = useRef<ConversationTurn[]>([])
+
+    // Microphone state for voice input
+    const [isMicOn, setIsMicOn] = useState<boolean>(false)
+
+    // Ref for speech recognition
+    const speechRecognitionRef = useRef<SpeechRecognition | null>(null)
+
+    // Voice state for speech recognition
+    const [voiceInputState, setVoiceInputState] = useState<SpeechRecognitionState>({
+        currentTranscript: "",
+        finalTranscript: "",
+        isListening: false,
+        isProcessingSpeech: false,
+    })
+
+    // Define styles based on user options (wrap setting)
+    const divStyle: CSSProperties = shouldWrapOutput
+        ? {
+              whiteSpace: "normal",
+              overflow: "visible",
+              textOverflow: "clip",
+              overflowX: "visible",
+          }
+        : {
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              overflowX: "auto",
+          }
+
+    // Keeps track of whether the agent completed its task
+    const succeeded = useRef<boolean>(false)
+
+    const networkDisplayName = useMemo(
+        () => toDisplayName(selectedNetwork, useNativeNames),
+        [selectedNetwork, useNativeNames]
+    )
+
+    useEffect(() => {
+        // Set up speech recognition
+        const handlers = setupSpeechRecognition(setChatInput, setVoiceInputState, speechRecognitionRef)
+
+        // Clean up function
+        return () => cleanupAndStopSpeechRecognition(speechRecognitionRef, handlers)
+    }, [])
+
+    useEffect(() => {
+        // Delay for a second before focusing on the input area; gets around ChatBot stealing focus.
+        setTimeout(() => chatInputRef?.current?.focus(), 1000)
+    }, [])
+
+    // Auto scroll chat output window when new content is added
+    useEffect(() => {
+        const container = chatOutputRef.current
+        if (!container) return
+
+        // Live-streaming auto-scroll
+        if (autoScrollEnabled) {
+            container.scrollTop = container.scrollHeight
+        }
+    }, [autoScrollEnabled, isAwaitingLlm, turns])
+
+    // Keep a ref copy of the turns array
+    useEffect(() => {
+        turnsRef.current = turns
+    }, [turns])
+
+    const addTurn = useCallback((turn: ConversationTurn) => {
+        setTurns((current) => {
+            const next = [...current, turn]
+            // Keep user queries visible even when a network streams more than MAX_TURNS responses.
+            return next.filter((item, index) => item.role === MessageRole.User || index >= next.length - MAX_TURNS)
+        })
+    }, [])
+
+    // We use this to update the same "turn" as chunks come in from legacy agents
+    const legacyTurnIdRef = useRef<string | null>(null)
+
+    const handleLegacyAgentChunk = useCallback(
+        (chunk: string) => {
+            currentResponse.current += chunk
+
+            if (legacyTurnIdRef.current) {
+                // We already have a turn for this response, so just update the text of that turn.
+                setTurns((prev) =>
+                    prev.map((t) => (t.id === legacyTurnIdRef.current ? {...t, text: currentResponse.current} : t))
+                )
+            } else {
+                // We don't yet have a turn for this response, so create one. On subsequent chunks, we'll just
+                // update the text of this turn.
+                legacyTurnIdRef.current = uuid()
+                addTurn({
+                    id: legacyTurnIdRef.current,
+                    messageType: ChatMessageType.AGENT,
+                    role: MessageRole.Agent,
+                    text: currentResponse.current,
+                })
+            }
+        },
+        [addTurn]
+    )
+
+    const handleNeuroSanAgentChunk = useCallback(
+        (chunk: string) => {
+            // For Neuro-san agents, we expect a ChatMessage structure in the chunk.
+            const chatMessage: ChatMessage | null = chatMessageFromChunk(chunk)
+            if (!chatMessage) {
+                // This is an error since Neuro-san agents should send us ChatMessage structures.
+                // But don't want to spam output by logging errors for every bad message.
+                return
+            }
+
+            // Shallow merge existing slyData with incoming chatMessage.sly_data.
+            // Defense in depth: never let BYOK API keys enter the persistent store, even if a network echoes
+            // them back -- the store is displayed and exportable via the sly_data editor.
+            if (chatMessage.sly_data) {
+                const {llm_config: _, ...echoedSlyData} = chatMessage.sly_data
+                updateSlyData(selectedNetwork, echoedSlyData)
+            }
+
+            // It's a ChatMessage. Does it have chat context? Only AGENT_FRAMEWORK messages can have chat context.
+            if (chatMessage.type === ChatMessageType.AGENT_FRAMEWORK && chatMessage.chat_context) {
+                // Save the chat context, potentially overwriting any previous ones we received during this session.
+                // We only care about the last one received.
+                updateChatContext(selectedNetwork, chatMessage.chat_context)
+            }
+
+            // Check if there is an error block in the "structure" field of the chat message.
+            const errorMessage = checkError(chatMessage.structure)
+            if (errorMessage) {
+                // If there is an error block, display it.
+                addTurn({
+                    id: uuid(),
+                    role: MessageRole.Warning,
+                    text: errorMessage,
+                })
+                succeeded.current = false
+            } else if (chatMessage?.text?.trim().length > 0 || !isEmpty(chatMessage.structure)) {
+                // Not an error, so output it if it has text or a structure.
+                // This is the normal happy path for an incoming message.
+                // The backend sometimes sends messages with no text content, and we don't want to display those to the
+                // user. Agent name is the last tool in the origin array. If it's not there, use a default name.
+                const agentName = chatMessage.origin?.at(-1)?.tool ?? "agent"
+                addTurn({
+                    agentName,
+                    id: uuid(),
+                    messageType: chatMessage.type,
+                    role: MessageRole.Agent,
+                    structure: chatMessage.structure,
+                    text: chatMessage.text,
+                })
+                if (chatMessage?.text?.trim().length > 0) {
+                    // Append to current response if present
+                    currentResponse.current += chatMessage.text
+                }
+            }
+        },
+        [addTurn, selectedNetwork, updateChatContext, updateSlyData]
+    )
+
+    /**
+     * Handle a chunk of response from the server. Called each time the server streams a chunk.
+     */
+    const handleChunk = useCallback(
+        (chunk: string): void => {
+            // Give container a chance to process the chunk first
+            const onChunkReceivedResult = onChunkReceived?.(chunk) ?? true
+            succeeded.current = succeeded.current || onChunkReceivedResult
+
+            if (isLegacyAgentType(selectedNetwork)) {
+                // For legacy agents, we either get plain text or Markdown. Just output it as-is.
+                handleLegacyAgentChunk(chunk)
+            } else {
+                handleNeuroSanAgentChunk(chunk)
+            }
+        },
+        [onChunkReceived, selectedNetwork, handleNeuroSanAgentChunk, handleLegacyAgentChunk]
+    )
+
+    /**
+     * Reset the state of the component. This is called after a request is completed, regardless of success or failure.
+     */
+    const resetState = useCallback(() => {
+        // Reset state, whatever happened during request
+        setIsAwaitingLlm(false)
+        setChatInput("")
+
+        setPreviousResponse?.(selectedNetwork, currentResponse.current)
+        currentResponse.current = ""
+        legacyTurnIdRef.current = null
+    }, [setIsAwaitingLlm, setPreviousResponse, selectedNetwork])
+
+    /*
+     * The main logic for sending a query to the server, with retries on errors.
+     */
+    const doRetryLoop = useCallback(
+        async (query: string) => {
+            succeeded.current = false
+
+            let attemptNumber: number = 0
+            let wasAborted: boolean = false
+
+            do {
+                try {
+                    // Increment the attempt number and set the state to indicate we're awaiting a response
+                    attemptNumber += 1
+
+                    // Check which agent type we are dealing with
+                    if (isLegacyAgentType(selectedNetwork)) {
+                        // It's a legacy agent (these go directly to the LLM and are different from
+                        // the Neuro-san agents).
+
+                        // Send the chat query to the server. This will block until the stream ends from the server
+                        await sendLlmRequest(
+                            handleChunk,
+                            controller?.current.signal,
+                            legacyAgentEndpoint,
+                            extraParams,
+                            query,
+                            agentChatHistory.chatHistory,
+                            null,
+                            StreamingUnit.Chunk
+                        )
+                    } else {
+                        // It's a Neuro-san agent.
+
+                        // Some coded tools (data generator...) expect the username provided in slyData.
+                        const slyDataWithUsername = {
+                            ...agentChatHistory?.slyData,
+                            ...extraSlyData,
+                            [SLY_DATA_LOGIN_KEY]: currentUser,
+                        }
+                        await sendChatQuery(
+                            neuroSanURL,
+                            controller?.current.signal,
+                            query,
+                            selectedNetwork,
+                            handleChunk,
+                            agentChatHistory.chatContext,
+                            slyDataWithUsername,
+                            currentUser,
+                            StreamingUnit.Line
+                        )
+                    }
+                } catch (error: unknown) {
+                    // Was it due to user aborting the request?
+                    wasAborted = error instanceof Error && error.name === "AbortError"
+                    if (wasAborted) {
+                        // AbortErrors are handled elsewhere. We also want to stop retries here.
+                        break
+                    } else {
+                        if (error instanceof Error) {
+                            console.error(error, error.stack)
+                        }
+                        addTurn({
+                            id: uuid(),
+                            role: MessageRole.Error,
+                            text: `Error occurred: ${error}`,
+                        })
+                    }
+                }
+            } while (attemptNumber < MAX_AGENT_RETRIES && !succeeded.current)
+            return wasAborted
+        },
+        [
+            addTurn,
+            agentChatHistory,
+            currentUser,
+            extraParams,
+            extraSlyData,
+            handleChunk,
+            legacyAgentEndpoint,
+            neuroSanURL,
+            selectedNetwork,
+        ]
+    )
+
+    const getFinalAnswerErrorTurn = () => ({
+        id: uuid(),
+        role: MessageRole.Error,
+        text: "The agent did not provide a final answer in the expected format. This is an internal error.",
+    })
+
+    const handleFinalAnswerLegacyAgent = useCallback(() => {
+        const currentTurns = turnsRef.current
+
+        // Prefer the most recent matching turn
+        const idx = currentTurns.reduceRight(
+            (foundIndex, turn, i) =>
+                foundIndex !== -1 || extractFinalAnswer(turn.text) === undefined ? foundIndex : i,
+            -1
+        )
+
+        if (idx === -1) {
+            if (givesFinalAnswer(selectedNetwork)) {
+                // This agent is supposed to give final answers, but didn't this time. An error.
+                setTurns((prev) => [...prev, getFinalAnswerErrorTurn()])
+                return
+            } else {
+                // Use the last received turn as the final answer
+                const lastTurn = currentTurns.slice(-1)[0]
+                if (!lastTurn) return
+
+                // Just set the last turn as the final answer
+                setTurns((prev) =>
+                    prev.map((turn) => (turn.id === lastTurn.id ? {...turn, role: MessageRole.FinalAnswer} : turn))
+                )
+
+                // Save it to chat history
+                updateChatHistory(selectedNetwork, [new AIMessage({content: lastTurn.text, id: uuid()})])
+                return
+            }
+        }
+
+        const sourceTurn = currentTurns[idx]
+
+        // Save item to chat history (same as original behavior)
+        updateChatHistory(selectedNetwork, [new AIMessage({content: sourceTurn.text, id: uuid()})])
+
+        // Extract the final answer from the turn.
+        const finalAnswer = extractFinalAnswer(sourceTurn.text)?.trim()
+
+        // Update the turn to be a final answer turn, and add a new final answer turn with just the final answer text.
+        setTurns((prev) => {
+            const sourceTurnIndex = prev.findIndex(({id: itemId}) => itemId === sourceTurn.id)
+
+            const updated =
+                sourceTurnIndex === -1
+                    ? [...prev]
+                    : prev.map((turn, index) => (index === sourceTurnIndex ? {...turn, text: sourceTurn.text} : turn))
+
+            // Add explicit final answer as a new terminal turn
+            updated.push({
+                id: uuid(),
+                role: MessageRole.FinalAnswer,
+                text: finalAnswer,
+            })
+
+            return updated
+        })
+    }, [selectedNetwork, updateChatHistory])
+
+    /**
+     * Extract the final answer from the turns for a Neuro-san agent. For Neuro-san agents, we expect the final answer
+     * to be the most recent turn messageType === ChatMessageType.AGENT_FRAMEWORK.
+     */
+    const handleFinalAnswerNeuroSanAgent = useCallback(() => {
+        // Get current turns snapshot
+        const currentTurns = turnsRef.current
+
+        // Find the most recent turn that is from the agent framework, which should be the one that contains the
+        // final answer.
+        const idx = currentTurns.reduceRight(
+            (found, turn, i) => (found !== -1 || turn.messageType !== ChatMessageType.AGENT_FRAMEWORK ? found : i),
+            -1
+        )
+
+        // Check for final answer
+        if (idx === -1) {
+            // No final answer found in the turns. Should never happen for a Neuro-san agent.
+            setTurns((prev) => [...prev, getFinalAnswerErrorTurn()])
+            return
+        }
+
+        // Extract final answer from that turn
+        const finalAnswerTurn = currentTurns[idx]
+        // Update relevant turn to be the final answer
+        setTurns((prev) => prev.map((turn, i) => (i === idx ? {...turn, role: MessageRole.FinalAnswer} : turn)))
+
+        // Save final answer to chat history
+        const finalAnswerContent = finalAnswerTurn.text || JSON.stringify(finalAnswerTurn.structure, null, 2)
+        updateChatHistory(selectedNetwork, [new AIMessage({content: finalAnswerContent, id: uuid()})])
+    }, [selectedNetwork, updateChatHistory])
+
+    const handleSend = useCallback(
+        async (query: string) => {
+            // Record user query in chat history. Discard anything beyond MAX_CHAT_HISTORY_ITEMS
+            const userQueryMessage = new HumanMessage({content: query, id: uuid()})
+            updateChatHistory(selectedNetwork, [userQueryMessage])
+
+            // Allow parent to intercept and modify the query before sending if needed
+            const queryToSend = onSend?.(query) ?? query
+
+            // Save query for "regenerate" use. Again we save the real user input, not the modified query. It will again
+            // get intercepted and re-modified (if applicable) on "regenerate".
+            setPreviousUserQuery(query)
+
+            setIsAwaitingLlm(true)
+
+            // Always start output by echoing user query.
+            // Note: we display the original user query, not the modified one. The modified one could be a monstrosity
+            // that we generated behind their back. Ultimately, we shouldn't need to generate a fake query on behalf
+            // of the user, but currently we do for orchestration.
+            addTurn({
+                id: uuid(),
+                role: MessageRole.User,
+                text: query,
+            })
+
+            // Allow clients to do something when streaming starts
+            onStreamingStarted?.()
+
+            // Set up the abort controller
+            controller.current = new AbortController()
+            setIsAwaitingLlm(true)
+
+            try {
+                // Invoke the logic to send the request and retry as necessary
+                const wasAborted = await doRetryLoop(queryToSend)
+
+                // Abort condition is handled elsewhere
+                if (!wasAborted) {
+                    if (succeeded.current) {
+                        // Success: infer final answer depending on agent type
+                        if (isLegacyAgentType(selectedNetwork)) {
+                            handleFinalAnswerLegacyAgent()
+                        } else {
+                            handleFinalAnswerNeuroSanAgent()
+                        }
+                    } else {
+                        // Exhausted retries without success. Display error to user.
+                        addTurn({
+                            id: uuid(),
+                            role: MessageRole.Error,
+                            text: `Gave up after ${MAX_AGENT_RETRIES} attempts.`,
+                        })
+                    }
+                }
+            } finally {
+                resetState()
+
+                // Allow parent components to do something when streaming is complete
+                onStreamingComplete?.()
+            }
+        },
+        [
+            addTurn,
+            doRetryLoop,
+            handleFinalAnswerLegacyAgent,
+            handleFinalAnswerNeuroSanAgent,
+            onSend,
+            onStreamingComplete,
+            onStreamingStarted,
+            resetState,
+            setIsAwaitingLlm,
+            selectedNetwork,
+            updateChatHistory,
+        ]
+    )
+
+    const handleStop = useCallback(() => {
+        try {
+            controller?.current?.abort()
+            controller.current = null
+            addTurn({
+                id: uuid(),
+                role: MessageRole.Warning,
+                text: "Request cancelled.",
+            })
+        } finally {
+            resetState()
+        }
+    }, [addTurn, resetState])
+
+    const formatTurns = (items: ConversationTurn[]) =>
+        items.map((turn) => `${roleToExportLabel(turn.role)}: ${turn.text}`).join("\n\n")
+
+    /**
+     * Save the current chat history and session to a file
+     */
+    const handleSaveChat = () => {
+        const chatHistory = agentChatHistory?.chatHistory
+        const chatHistoryTurns = toTurns(chatHistory)
+
+        // Get the current date and time in a human-readable format, including the local time zone
+        const exportedAt = new Date()
+        const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+        const exportedAtText = exportedAt.toLocaleString(undefined, {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+            second: "2-digit",
+            timeZoneName: "short",
+        })
+
+        const allHistoryText = [
+            "Chat export",
+            `Network: ${selectedNetwork}`,
+            `Exported: ${exportedAtText} (${timeZone})`,
+            "",
+            "====================",
+            "Previous history",
+            "====================",
+            formatTurns(chatHistoryTurns) || "No persisted chat history.",
+            "",
+            "====================",
+            "Current session",
+            "====================",
+            formatTurns(exportableTurns) || "No current session turns.",
+        ].join("\n")
+
+        // Download the file
+        const filename = `${toSafeFilename(`${selectedNetwork}-history`)}.txt`
+        downloadFile(allHistoryText, filename, "text/plain")
+    }
+
+    // Regex to check if user has typed anything besides whitespace
+    const userInputEmpty = !chatInput || chatInput.length === 0 || hasOnlyWhitespace(chatInput)
+
+    // Enable Send button when there is user input and not awaiting a response
+    const shouldEnableSendButton = !userInputEmpty && !isAwaitingLlm
+
+    // Enable regenerate button when there is a previous query to resent, and we're not awaiting a response
+    const shouldEnableRegenerateButton = previousUserQuery && !isAwaitingLlm
+
+    // Enable Clear Chat button if not awaiting response and there is chat output to clear
+    const enableClearChatButton = !isAwaitingLlm && (turns.length > 0 || agentChatHistory?.chatHistory?.length > 0)
+
+    const [clearChatConfirmationDialogOpen, setClearChatConfirmationDialogOpen] = useState<boolean>(false)
+
+    const getPlaceholder = () => agentPlaceholders[selectedNetwork] || `Chat with ${networkDisplayName}`
+
+    const handleClearChat = useCallback(() => {
+        setTurns([])
+        resetHistory(selectedNetwork)
+        setPreviousUserQuery("")
+        currentResponse.current = ""
+    }, [resetHistory, selectedNetwork])
+
+    // Expose the handleStop and handleClearChat methods to parent components via ref for external control
+    useImperativeHandle(
+        ref,
+        () => ({
+            handleStop,
+            handleClearChat,
+        }),
+        [handleStop, handleClearChat]
+    )
+
+    const getErrorOverlay = (errorText: ReactNode) => (
+        <Box
+            id="chat-disabled-overlay"
+            sx={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                zIndex: getZIndex(2, theme),
+                cursor: "not-allowed",
+                // Capture all pointer events to prevent interaction with the chat when no agent is selected
+                pointerEvents: "all",
+            }}
+        >
+            <Typography
+                sx={{
+                    position: "absolute",
+                    top: "50%",
+                    left: "50%",
+                    transform: "translate(-50%, -50%)",
+                }}
+            >
+                {errorText}
+            </Typography>
+        </Box>
+    )
+
+    const getTitle = () => (
+        <Box
+            id={`llm-chat-title-container-${id}`}
+            sx={{
+                alignItems: "center",
+                borderTopLeftRadius: `${SHEEN_RADIUS_SURFACE}px`,
+                borderTopRightRadius: `${SHEEN_RADIUS_SURFACE}px`,
+                display: "flex",
+                justifyContent: "space-between",
+                paddingLeft: "1rem",
+                paddingRight: "0.5rem",
+                paddingTop: "0.25rem",
+                paddingBottom: "0.25rem",
+            }}
+        >
+            <Typography
+                id={`llm-chat-title-${id}-text`}
+                sx={{color: "text.primary", fontSize: "0.9rem", fontWeight: 600}}
+            >
+                {title}
+            </Typography>
+            {onClose && (
+                <IconButton
+                    data-testid={`close-button-${id}`}
+                    id={`close-button-${id}`}
+                    onClick={onClose}
+                >
+                    <CloseIcon id={`close-icon-${id}`} />
+                </IconButton>
+            )}
+        </Box>
+    )
+
+    const getOptionsMenuButton = () => (
+        <Box
+            id={`${id}-options-menu-button-container`}
+            sx={{
+                ...glassSurface(theme, SHEEN_RADIUS),
+                position: "absolute",
+                right: theme.spacing(2.5),
+                top: theme.spacing(1),
+                zIndex: getZIndex(2, theme),
+            }}
+        >
+            <IconButton
+                onClick={(e) => {
+                    setOptionsMenuAnchorEl(e.currentTarget)
+                    setOptionsMenuOpen(true)
+                }}
+            >
+                <TuneIcon fontSize="small" />
+            </IconButton>
+        </Box>
+    )
+
+    const agentGreeting = customAgentGreetings[selectedNetwork] ?? "Hi, how can I help?"
+
+    const handleOptionsMenuClose = () => {
+        setOptionsMenuAnchorEl(null)
+        setOptionsMenuOpen(false)
+    }
+
+    const handleToggleAutoScroll = () => {
+        setAutoScrollEnabled((prev) => !prev)
+    }
+
+    const handleToggleWrapOutput = () => {
+        setShouldWrapOutput((prev) => !prev)
+    }
+
+    const handleShowSlyData = () => {
+        handleOptionsMenuClose()
+        setSlyDataDialogOpen(true)
+    }
+
+    /**
+     * The sly_data keys that this component merges in on every request, on top of whatever is in the store. The
+     * sly_data editor lists them so that the user isn't surprised by keys arriving at the server that they never
+     * typed -- and, for the API keys among them, so that we never have to display their values.
+     */
+    const getMergedSlyDataKeys = (): readonly string[] => [...Object.keys(extraSlyData ?? {}), SLY_DATA_LOGIN_KEY]
+
+    const getOptionsMenu = () => (
+        <Menu
+            id={`${id}-options-menu`}
+            anchorEl={optionsMenuAnchorEl}
+            open={optionsMenuOpen}
+            onClose={handleOptionsMenuClose}
+            slotProps={{
+                list: {
+                    dense: true,
+                    sx: {
+                        py: 0,
+                        "& .MuiMenuItem-root": {minHeight: 30, py: 0.5, px: 1},
+                        "& .MuiCheckbox-root": {p: 0.5},
+                        "& .MuiListItemText-primary": {fontSize: "smaller"},
+                    },
+                },
+            }}
+        >
+            <MenuItem onClick={handleToggleAutoScroll}>
+                <ListItemIcon>
+                    <Checkbox
+                        checked={autoScrollEnabled}
+                        tabIndex={-1}
+                        sx={{pointerEvents: "none"}}
+                    />
+                </ListItemIcon>
+                <ListItemText primary="Auto-scroll output" />
+            </MenuItem>
+            <MenuItem onClick={handleToggleWrapOutput}>
+                <ListItemIcon>
+                    <Checkbox
+                        checked={shouldWrapOutput}
+                        tabIndex={-1}
+                        sx={{pointerEvents: "none"}}
+                    />
+                </ListItemIcon>
+                <ListItemText primary="Wrap output" />
+            </MenuItem>
+            {/* Legacy agents talk straight to an LLM and have no sly_data, so there is nothing to show for them */}
+            {!isLegacyAgentType(selectedNetwork) && (
+                <MenuItem
+                    id={`${id}-sly-data-menu-item`}
+                    onClick={handleShowSlyData}
+                >
+                    <ListItemIcon>
+                        <DataObjectIcon fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText primary="Sly data..." />
+                </MenuItem>
+            )}
+        </Menu>
+    )
+
+    const getNetworkIntro = () => (
+        <Box sx={{marginBottom: "0.5rem", marginTop: "1rem"}}>
+            <Typography
+                component="span"
+                sx={{fontWeight: 700}}
+                variant="inherit"
+            >
+                {networkDisplayName}
+                {networkDescription && ":"}
+            </Typography>
+            {networkDescription && (
+                <Typography
+                    component="span"
+                    sx={{ml: 0.5}}
+                    variant="inherit"
+                >
+                    {" "}
+                    {networkDescription}
+                </Typography>
+            )}
+        </Box>
+    )
+
+    const getChatHistory = () => (
+        <>
+            {agentChatHistory?.chatHistory?.length > 0 && (
+                <Box sx={{my: "0.5rem"}}>
+                    <ChatHistory
+                        id={id}
+                        messages={agentChatHistory.chatHistory}
+                    />
+                </Box>
+            )}
+        </>
+    )
+
+    const getAgentGreeting = () => <Box sx={{marginBottom: "0.5rem", marginTop: "1rem"}}>{agentGreeting}</Box>
+
+    const getControlButtons = () => (
+        <Box
+            sx={{
+                bottom: theme.spacing(3),
+                right: theme.spacing(3),
+                position: "absolute",
+                zIndex: getZIndex(2, theme),
+            }}
+        >
+            <ControlButtons
+                enableClearChatButton={enableClearChatButton}
+                enableSaveChatButton={enableSaveChatButton}
+                handleClearChat={() => setClearChatConfirmationDialogOpen(true)}
+                handleSave={handleSaveChat}
+                handleSend={handleSend}
+                handleStop={handleStop}
+                isAwaitingLlm={isAwaitingLlm}
+                previousUserQuery={previousUserQuery}
+                shouldEnableRegenerateButton={shouldEnableRegenerateButton}
+            />
+        </Box>
+    )
+
+    const getWorkingSpinner = () => (
+        <>
+            {isAwaitingLlm && (
+                <Box
+                    id="awaitingOutputContainer"
+                    sx={{
+                        alignItems: "center",
+                        animation: `sheenRise 0.4s ${SHEEN_EASE} both`,
+                        display: "flex",
+                        fontSize: "smaller",
+                        gap: "0.75rem",
+                        my: "0.5rem",
+                    }}
+                >
+                    {/* Morphing iridescent orb with a soft halo */}
+                    <Box
+                        aria-label="Working"
+                        component={motion.div}
+                        id="awaitingOutputSpinner"
+                        initial={{opacity: 0, scale: 0.3}}
+                        animate={{opacity: 1, scale: 1}}
+                        transition={{type: "spring", stiffness: 420, damping: 20}}
+                        role="progressbar"
+                        sx={{
+                            flexShrink: 0,
+                            height: ORB_SIZE,
+                            position: "relative",
+                            width: ORB_SIZE,
+                            // Halo
+                            "&::before": {
+                                animation: "sheenSpin 3s linear infinite",
+                                background: sheenConic(theme),
+                                borderRadius: "50%",
+                                content: '""',
+                                filter: "blur(8px)",
+                                inset: -4,
+                                opacity: 0.7,
+                                position: "absolute",
+                            },
+                            // Blob
+                            "&::after": {
+                                animation: `sheenSpin 2.4s linear infinite, ${ORB_MORPH} 3.2s ${SHEEN_EASE} infinite`,
+                                background: [
+                                    "radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.85), transparent 42%)",
+                                    sheenConic(theme),
+                                ].join(", "),
+                                boxShadow: `inset 0 -2px 6px rgba(0, 0, 0, 0.25), 0 0 16px ${getSheen(theme).glow}`,
+                                content: '""',
+                                inset: 0,
+                                position: "absolute",
+                            },
+                        }}
+                    />
+                    {/* Shimmering gradient label */}
+                    <Box
+                        component="span"
+                        id="working-span"
+                        sx={{
+                            ...gradientText(theme),
+                            animationDuration: "2.4s",
+                            fontWeight: 600,
+                            letterSpacing: "0.02em",
+                        }}
+                    >
+                        Working...
+                    </Box>
+                </Box>
+            )}
+        </>
+    )
+
+    const getThinking = () => (
+        <>
+            {!isAwaitingLlm && turns.length > 0 && (
+                // Only show thinking once streaming is complete
+                <Thinking
+                    id={id}
+                    turns={turns}
+                    useNativeNames={useNativeNames}
+                />
+            )}
+        </>
+    )
+
+    const getResponseBox = () => (
+        <Box
+            id="llm-response-div"
+            sx={{
+                ...divStyle,
+                border: `1px solid ${getSheen(theme).glassBorder}`,
+                borderRadius: `${SHEEN_RADIUS_SURFACE}px`,
+                display: "flex",
+                flexGrow: 1,
+                marginLeft: "10px",
+                marginRight: "10px",
+                marginTop: title ? 0 : "10px",
+                position: "relative",
+                overflowY: "auto",
+            }}
+        >
+            {clearChatConfirmationDialogOpen ? (
+                <ConfirmationModal
+                    id={`${id}-clear-chat-confirmation-modal`}
+                    content={
+                        "This will clear the current chat session and any persisted chat history for this " +
+                        "network. This operation cannot be undone. Are you sure you wish to continue?"
+                    }
+                    handleCancel={() => {
+                        setClearChatConfirmationDialogOpen(false)
+                    }}
+                    handleOk={() => {
+                        setClearChatConfirmationDialogOpen(false)
+                        setTurns([])
+                        resetHistory(selectedNetwork)
+                        setPreviousUserQuery("")
+                        currentResponse.current = ""
+                    }}
+                    okBtnLabel="Yes, clear chat"
+                    title={`Clear all chat including history for ${networkDisplayName}?`}
+                />
+            ) : null}
+            {slyDataDialogOpen ? (
+                <SlyDataDialog
+                    extraSlyDataKeys={getMergedSlyDataKeys()}
+                    id={`${id}-sly-data-dialog`}
+                    isOpen={slyDataDialogOpen}
+                    networkDisplayName={networkDisplayName}
+                    networkId={selectedNetwork}
+                    onClose={() => setSlyDataDialogOpen(false)}
+                    slyDataSchema={slyDataSchema}
+                />
+            ) : null}
+            <Box
+                id="llm-responses"
+                ref={chatOutputRef}
+                sx={{
+                    backgroundColor,
+                    borderRadius: `${SHEEN_RADIUS}px`,
+                    fontSize: "16px",
+                    overflowY: "auto",
+                    paddingBottom: "60px",
+                    paddingLeft: "15px",
+                    paddingRight: "15px",
+                    paddingTop: "7.5px",
+                    scrollbarGutter: "stable",
+                    width: "100%",
+                }}
+                tabIndex={-1}
+            >
+                {getOptionsMenu()}
+                {getOptionsMenuButton()}
+                {getChatHistory()}
+                {getNetworkIntro()}
+                {getAgentGreeting()}
+                <SampleQueries
+                    disabled={isAwaitingLlm}
+                    handleSend={handleSend}
+                    sampleQueries={sampleQueries}
+                />
+                <Box
+                    role="region"
+                    aria-label="Current conversation"
+                >
+                    <Conversation
+                        id={id}
+                        includeAgentMessages={!givesFinalAnswer(selectedNetwork)}
+                        isStreaming={isAwaitingLlm}
+                        shouldWrapOutput={shouldWrapOutput}
+                        turns={turns}
+                    />
+                </Box>
+                {getThinking()}
+                {getWorkingSpinner()}
+                {getControlButtons()}
+            </Box>
+        </Box>
+    )
+
+    /**
+     * Floating glass pill. A faint gradient hairline brightens on hover/focus; while awaiting a response it becomes a
+     * rotating iridescent border so the input visibly "thinks".
+     */
+    const getUserInputSx = () => {
+        const sheen = getSheen(theme)
+        const border = isAwaitingLlm
+            ? spinningBorder(theme, INPUT_PILL_RADIUS, 1.5)
+            : gradientBorder(theme, INPUT_PILL_RADIUS, 1, 0.35)
+        const restingShadow = `inset 0 1px 0 ${sheen.highlight}, 0 14px 40px -16px rgba(0, 0, 0, 0.45)`
+        return {
+            ...glassSurface(theme),
+            ...border,
+            borderColor: "transparent",
+            borderRadius: `${INPUT_PILL_RADIUS}px`,
+            boxShadow: isAwaitingLlm ? `${restingShadow}, 0 0 28px -10px ${sheen.glow}` : restingShadow,
+            color: "text.primary",
+            display: "flex",
+            flexGrow: 1,
+            fontSize: "17px",
+            marginRight: "0.75rem",
+            paddingBottom: "0.5rem",
+            paddingTop: "0.5rem",
+            paddingLeft: "1.1rem",
+            paddingRight: "1rem",
+            transition: `margin-right 0.2s, box-shadow 0.3s ${SHEEN_EASE}`,
+            "&::before": {...border["&::before"], transition: "opacity 0.3s ease"},
+            "&:hover::before": {opacity: isAwaitingLlm ? 1 : 0.6},
+            "&.Mui-focused": {
+                boxShadow: `${restingShadow}, 0 0 0 4px ${sheen.tint}, ${glowShadow(theme)}`,
+            },
+            "&.Mui-focused::before": {opacity: 1},
+            "& textarea": {
+                overflowY: "auto",
+            },
+            // The pill grows smoothly with its content (MUI's autosize sets an explicit pixel height on the visible
+            // textarea; the hidden measuring copy is aria-hidden and left alone)
+            "& textarea:not([aria-hidden])": {
+                transition: `height 0.28s ${SHEEN_EASE}`,
+            },
+        }
+    }
+
+    const getUserInputBox = () => (
+        <Box
+            id="user-input-div"
+            sx={{
+                ...divStyle,
+                alignItems: "center",
+                display: "flex",
+                margin: "10px",
+                position: "relative",
+            }}
+        >
+            <Input
+                autoComplete="off"
+                id="user-input"
+                maxRows={MAX_CHAT_INPUT_ROWS}
+                multiline={true}
+                placeholder={getPlaceholder()}
+                ref={chatInputRef}
+                disableUnderline={true}
+                sx={getUserInputSx()}
+                onChange={(event) => {
+                    setChatInput(event.target.value)
+                }}
+                onKeyDown={async (event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault()
+                        await handleSend(chatInput)
+                    }
+                }}
+                value={chatInput}
+                endAdornment={
+                    <InputAdornment
+                        id="input-adornments"
+                        position="end"
+                        disableTypography={true}
+                    >
+                        {/* Voice processing spinner - shows only when actively speaking */}
+                        {voiceInputState.isProcessingSpeech && (
+                            <CircularProgress
+                                size={16}
+                                sx={{
+                                    color: "primary.main",
+                                    marginRight: "0.5rem",
+                                }}
+                            />
+                        )}
+                        <IconButton
+                            id="clear-input-button"
+                            onClick={() => {
+                                setChatInput("")
+                            }}
+                            sx={{
+                                color: "text.secondary",
+                                opacity: userInputEmpty ? "25%" : "100%",
+                            }}
+                            disabled={userInputEmpty}
+                            tabIndex={-1}
+                            edge="end"
+                        >
+                            <ClearIcon id="clear-input-icon" />
+                        </IconButton>
+                    </InputAdornment>
+                }
+            />
+
+            <Box sx={{display: "flex", gap: "0.25rem", position: "relative", alignItems: "center"}}>
+                <MicrophoneButton
+                    isMicOn={isMicOn}
+                    onMicToggle={setIsMicOn}
+                    setVoiceInputState={setVoiceInputState}
+                    speechRecognitionRef={speechRecognitionRef}
+                    voiceInputState={voiceInputState}
+                />
+
+                <SendButton
+                    enableSendButton={shouldEnableSendButton}
+                    id="submit-query-button"
+                    onClickCallback={() => handleSend(chatInput)}
+                />
+            </Box>
+        </Box>
+    )
+
+    const getChatBox = () => (
+        <Box
+            id={`llm-chat-${id}`}
+            sx={{
+                display: "flex",
+                flexDirection: "column",
+                flexGrow: 1,
+                height: "100%",
+                opacity: selectedNetwork ? 1 : 0.4,
+                pointerEvents: selectedNetwork ? "auto" : "none",
+                position: "relative",
+            }}
+        >
+            {title && getTitle()}
+            {getResponseBox()}
+            {getUserInputBox()}
+        </Box>
+    )
+
+    const getSelectNetworkOverlayBody = () => (
+        <Typography component="span">
+            Please select a Network from the list to start the chat, or click
+            <IconButton
+                onClick={() => setSelectedNetwork?.(AGENT_NETWORK_DESIGNER_ID)}
+                aria-label="select-network-designer"
+                sx={{
+                    px: 0.5,
+                    verticalAlign: "middle",
+                    mb: "4px",
+                }}
+            >
+                <AddBoxRounded
+                    sx={{
+                        color: "primary.main",
+                        fontSize: "1rem",
+                    }}
+                />
+            </IconButton>
+            to design your own network!
+        </Typography>
+    )
+
+    return (
+        <Box
+            id={`llm-chat-${id}`}
+            sx={{
+                height: "100%",
+                position: "relative",
+            }}
+        >
+            {selectedNetwork
+                ? hasMissingApiKeys
+                    ? getErrorOverlay("")
+                    : getChatBox() // Parent will display error for this case
+                : getErrorOverlay(getSelectNetworkOverlayBody())}
+        </Box>
+    )
+}

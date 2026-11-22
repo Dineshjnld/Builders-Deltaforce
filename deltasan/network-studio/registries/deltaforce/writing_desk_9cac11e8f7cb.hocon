@@ -1,0 +1,49 @@
+{
+include "config/llm_config.hocon"
+
+  "metadata": {
+    "description": "Writing Desk"
+  },
+  "max_execution_seconds": 120,
+  "tools": [
+    {
+      "name": "LeadEditor",
+      "function": {
+        "description": "Oversee the overall quality and style of the writing"
+      },
+      "instructions": "Oversee the overall quality and style of the writing\nCall CopyEditor when Ensure the text is free of grammatical and spelling errors.\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "CopyEditor",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free"
+      ]
+    },
+    {
+      "name": "CopyEditor",
+      "function": {
+        "description": "Ensure the text is free of grammatical and spelling errors",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Ensure the text is free of grammatical and spelling errors\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "web_fetch",
+      "toolbox": "web_fetch"
+    }
+  ]
+}

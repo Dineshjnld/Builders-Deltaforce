@@ -1,0 +1,61 @@
+{
+include "config/llm_config.hocon"
+
+  "metadata": {
+    "description": "Facilities Inspection Summary · Inspection Report"
+  },
+  "max_execution_seconds": 120,
+  "tools": [
+    {
+      "name": "Coordinator",
+      "function": {
+        "description": "Inspection Report"
+      },
+      "instructions": "Use only the supplied materials. Flag missing evidence. Return recommendations for human review. Delegate to the specialists and combine their findings. Inspection Report",
+      "tools": [
+        "FacilitiesManager",
+        "OfficeManager"
+      ]
+    },
+    {
+      "name": "FacilitiesManager",
+      "function": {
+        "description": "Review and summarize inspection notes",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and source material"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Use only the supplied materials. Flag missing evidence. Return recommendations for human review. Review and summarize inspection notes",
+      "tools": []
+    },
+    {
+      "name": "OfficeManager",
+      "function": {
+        "description": "Review and approve inspection report",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and source material"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Use only the supplied materials. Flag missing evidence. Return recommendations for human review. Review and approve inspection report",
+      "tools": []
+    }
+  ]
+}

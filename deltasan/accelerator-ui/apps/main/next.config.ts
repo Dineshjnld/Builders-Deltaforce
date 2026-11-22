@@ -1,0 +1,86 @@
+// @ts-check
+
+// enables IDEs to type check this config file.
+// See: https://nextjs.org/docs/basic-features/typescript
+
+import path from "node:path"
+
+/* eslint-disable no-shadow */
+const __dirname = import.meta.dirname
+/* eslint-enable no-shadow */
+
+// Extra headers to be returned
+// Gleaned from here: https://nextjs.org/docs/advanced-features/security-headers
+const securityHeaders = [
+    {
+        key: "Strict-Transport-Security",
+        value: "max-age=63072000; includeSubDomains; preload",
+    },
+    {
+        key: "X-Content-Type-Options",
+        value: "nosniff",
+    },
+    {
+        key: "X-Frame-Options",
+        value: "SAMEORIGIN",
+    },
+    {
+        key: "X-XSS-Protection",
+        value: "1; mode=block",
+    },
+    {
+        key: "Content-Security-Policy",
+        value: "",
+    },
+]
+
+const nextConfig: import("next").NextConfig = {
+    transpilePackages: ["@cognizant-ai-lab/ui-common"],
+
+    typescript: {
+        // We check this elsewhere so disable during build
+        ignoreBuildErrors: true,
+    },
+
+    output: "standalone",
+    experimental: {proxyTimeout: 180000},
+
+    images: {
+        // See: https://nextjs.org/docs/app/api-reference/components/image#remotepatterns
+        remotePatterns: [
+            {
+                protocol: "https",
+                hostname: "**avatars.githubusercontent.com",
+                port: "",
+            },
+            {
+                protocol: "https",
+                hostname: "**gravatar.com",
+                port: "",
+            },
+        ],
+    },
+
+    redirects: async () => ["/", "/harness", "/UserGuide"].map(source=>({source,destination:"/multiAgentAccelerator",permanent:false})),
+    rewrites: async () => [{ source: "/api/v1/:path*", destination: "http://host.docker.internal:45184/api/v1/:path*" }],
+    poweredByHeader: false,
+
+    // Disable dev tools icon
+    devIndicators: false,
+
+    headers: async () => [
+        {
+            // Apply these headers to all routes in the application.
+            source: "/:path*",
+            headers: securityHeaders,
+        },
+    ],
+
+    sassOptions: {
+        includePaths: [path.join(__dirname, "styles")],
+    },
+}
+
+// Seems to need to be exported for Next.js to pick it up
+export default nextConfig
+

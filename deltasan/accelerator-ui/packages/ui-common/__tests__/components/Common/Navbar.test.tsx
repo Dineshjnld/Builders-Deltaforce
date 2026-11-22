@@ -1,0 +1,438 @@
+/*
+Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+/**
+ * Component tests for top nav bar
+ */
+
+import {createTheme, ThemeProvider} from "@mui/material/styles"
+import {fireEvent, render, screen, waitFor, within} from "@testing-library/react"
+import {userEvent, UserEvent} from "@testing-library/user-event"
+import {ComponentProps} from "react"
+
+import {withStrictMocks} from "../../../../../__tests__/common/strictMocks"
+import {OPEN_COMMAND_PALETTE_EVENT_NAME} from "../../../components/CommandPalette/CommandPalette"
+import {Navbar} from "../../../components/Common/Navbar"
+import {getContactUsConfirmationText} from "../../../const"
+import {useSettingsStore} from "../../../state/Settings"
+import * as BrowserNavigation from "../../../utils/BrowserNavigation"
+import {navigateToUrl} from "../../../utils/BrowserNavigation"
+
+const reducedMotion = vi.hoisted(() => ({value: false}))
+
+vi.mock("motion/react", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("motion/react")>()),
+    useReducedMotion: () => reducedMotion.value,
+}))
+
+const MOCK_EMAIL_ADDRESS = "helloWorld@mock.com"
+const MOCK_USER = "mock-user"
+const MOCK_LOGO_SERVICE_TOKEN = "mock-logo-dev-token"
+const LOGO = "mock-title"
+
+describe("Navbar", () => {
+    withStrictMocks()
+
+    let user: UserEvent
+
+    const theme = createTheme({colorSchemes: {light: true, dark: true}})
+
+    const renderNavbar = (
+        pathName: string = "/projects",
+        onNavigate?: (path: string) => void,
+        overrides: Partial<ComponentProps<typeof Navbar>> = {}
+    ) =>
+        render(
+            <ThemeProvider theme={theme}>
+                <Navbar
+                    authenticationType=""
+                    enableAuthentication={true}
+                    id="mock-id"
+                    logo={LOGO}
+                    logoServiceToken={MOCK_LOGO_SERVICE_TOKEN}
+                    onNavigate={onNavigate}
+                    pathname={pathName}
+                    query={undefined}
+                    signOut={vi.fn()}
+                    supportEmailAddress={MOCK_EMAIL_ADDRESS}
+                    userInfo={{
+                        name: MOCK_USER,
+                        image: "",
+                    }}
+                    {...overrides}
+                />
+            </ThemeProvider>
+        )
+
+    beforeEach(() => {
+        user = userEvent.setup()
+
+        // Reset settings to default before each test to avoid state leakage between tests
+        useSettingsStore.getState().resetSettings()
+    })
+
+    afterEach(() => {
+        reducedMotion.value = false
+    })
+
+    it("should open a confirmation dialog when the contact us link is clicked", async () => {
+        renderNavbar()
+
+        const helpToggle = await screen.findByText("Help")
+        await user.click(helpToggle)
+        const contactUsItem = await screen.findByText("Contact Us")
+        await user.click(contactUsItem)
+
+        await screen.findByText(getContactUsConfirmationText(MOCK_EMAIL_ADDRESS))
+        await screen.findByText("Confirm")
+    })
+
+    it("Should open the Settings page when Settings is clicked", async () => {
+        renderNavbar()
+
+        expect(screen.queryByTestId("settings-dialog")).not.toBeInTheDocument()
+
+        const settingsButton = screen.getByTestId("SettingsIcon")
+        await user.click(settingsButton)
+
+        screen.getByTestId("settings-dialog")
+        screen.getByRole("heading", {name: "Settings"})
+        expect(screen.getAllByText("Appearance").length).toBeGreaterThan(0)
+        expect(screen.getAllByText("Network animation").length).toBeGreaterThan(0)
+
+        // Close it
+        const closeButton = await screen.findByLabelText("close")
+        await user.click(closeButton)
+
+        expect(screen.queryByTestId("settings-dialog")).not.toBeInTheDocument()
+    })
+
+    it("should redirect to email client when confirmation is clicked", async () => {
+        vi.spyOn(BrowserNavigation, "navigateToUrl").mockImplementation(vi.fn())
+
+        renderNavbar()
+
+        const helpToggle = await screen.findByText("Help")
+        await user.click(helpToggle)
+        const contactUsItem = await screen.findByText("Contact Us")
+        await user.click(contactUsItem)
+        const confirmButton = await screen.findByText("Confirm")
+        await user.click(confirmButton)
+
+        expect(navigateToUrl).toHaveBeenCalledWith(`mailto:${MOCK_EMAIL_ADDRESS}`)
+    })
+
+    it("renders the Navbar with the provided title and logo", async () => {
+        const customer = "Acme"
+
+        useSettingsStore.getState().updateSettings({branding: {customer}})
+        useSettingsStore.getState().updateSettings({branding: {logoSource: "auto"}})
+
+        renderNavbar()
+        const logoLink = await screen.findByRole("link", {name: `${LOGO} Decisioning`})
+        expect(logoLink).toHaveAttribute("href", "/")
+
+        const logoImage = screen.getByRole("img", {name: `${customer} Logo`})
+        expect(logoImage).toHaveAttribute("src", expect.stringMatching(new RegExp(`logo.dev.*${customer}`, "u")))
+    })
+
+    it("displays the customer branding text when customer is set", async () => {
+        const customer = "Acme"
+        useSettingsStore.getState().updateSettings({branding: {customer}})
+
+        renderNavbar()
+
+        const customerBranding = await screen.findByText(customer)
+        expect(customerBranding).toBeVisible()
+    })
+
+    it("does not display customer branding text when customer is not set", async () => {
+        renderNavbar()
+
+        expect(screen.queryByTestId("customer-branding")).not.toBeInTheDocument()
+    })
+
+    it("does not display customer branding text when customer is whitespace only", async () => {
+        useSettingsStore.getState().updateSettings({branding: {customer: " ".repeat(3)}})
+
+        renderNavbar()
+
+        expect(screen.queryByTestId("customer-branding")).not.toBeInTheDocument()
+    })
+
+    it("renders the Navbar with the provided logo (Neuro® AI Multi-Agent Accelerator)", async () => {
+        renderNavbar("/multiAgentAccelerator")
+
+        const logoLink = await screen.findByRole("link", {name: `${LOGO} Multi-Agent Accelerator`})
+        expect(logoLink).toHaveAttribute("href", "/")
+    })
+
+    it("displays the build version", async () => {
+        renderNavbar()
+        await screen.findByText(/Build:/iu)
+    })
+
+    it("opens the help menu", async () => {
+        renderNavbar()
+
+        const helpToggle = await screen.findByText("Help")
+        await user.click(helpToggle)
+
+        const userGuide = await screen.findByText("User guide")
+        expect(userGuide).toBeVisible()
+    })
+
+    it("opens the profile menu", async () => {
+        renderNavbar()
+
+        const userDropdownToggle = await screen.findByRole("button", {name: "User dropdown toggle"})
+        await user.click(userDropdownToggle)
+
+        const signOut = await screen.findByText("Sign out")
+        expect(signOut).toBeVisible()
+    })
+
+    it("opens the explore menu", async () => {
+        renderNavbar()
+
+        const helpToggle = await screen.findByText("Explore")
+        await user.click(helpToggle)
+
+        const neuroSanStudioItem = await screen.findByText("Neuro-san studio (examples)")
+        expect(neuroSanStudioItem).toBeVisible()
+
+        const neuroSanCoreItem = await screen.findByText("Neuro-san (core)")
+        expect(neuroSanCoreItem).toBeVisible()
+    })
+
+    it.each([
+        {toggleName: "Explore", itemName: "Neuro-san studio (examples)"},
+        {toggleName: "Help", itemName: "User guide"},
+        {toggleName: "User dropdown toggle", itemName: "Sign out"},
+    ])("opens the $toggleName menu from the keyboard", async ({toggleName, itemName}) => {
+        renderNavbar()
+
+        const toggle = await screen.findByRole("button", {name: toggleName})
+        expect(toggle).toHaveAttribute("aria-haspopup", "true")
+        expect(toggle).not.toHaveAttribute("aria-expanded")
+
+        toggle.focus()
+        await user.keyboard("{Enter}")
+
+        const menu = await screen.findByRole("menu", {name: toggleName})
+        expect(toggle).toHaveAttribute("aria-expanded", "true")
+        expect(within(menu).getByRole("menuitem", {name: itemName})).toBeVisible()
+    })
+
+    it("toggles dark mode", async () => {
+        renderNavbar()
+
+        const darkModeToggle = await screen.findByTestId("DarkModeIcon")
+
+        // Light mode: muted icon
+        expect(darkModeToggle).toHaveStyle({color: createTheme({palette: {mode: "light"}}).palette.text.secondary})
+
+        await user.click(darkModeToggle)
+
+        // Dark mode: icon lights up in the secondary (amber) accent
+        expect(darkModeToggle).toHaveStyle({color: createTheme({palette: {mode: "dark"}}).palette.secondary.main})
+    })
+
+    it("renders as a floating sticky pill", () => {
+        renderNavbar()
+
+        const navBar = document.getElementById("nav-bar-container")
+        expect(navBar).toHaveStyle({position: "sticky", top: "12px", borderRadius: "999px"})
+    })
+
+    it("uses the branding primary color for the menu icons when set", async () => {
+        useSettingsStore.getState().updateSettings({branding: {primary: "#123456"}})
+        renderNavbar()
+
+        expect(document.getElementById("nav-explore-dropdown-arrow")).toHaveStyle({color: "#123456"})
+    })
+
+    it("renders page links and marks the current page", async () => {
+        renderNavbar("/multiAgentAccelerator")
+
+        // The links only show on wide screens (a media query jsdom doesn't match), so include hidden elements
+        const nav = document.getElementById("nav-bar-links")
+        expect(nav.tagName).toBe("NAV")
+        expect(nav).toHaveAttribute("aria-label", "Main")
+
+        const maaLink = screen.getByRole("link", {hidden: true, name: "Multi-Agent Accelerator"})
+        expect(maaLink).toHaveAttribute("aria-current", "page")
+        expect(maaLink).toHaveAttribute("href", "/multiAgentAccelerator")
+        expect(screen.getByRole("link", {hidden: true, name: "User Guide"})).not.toHaveAttribute("aria-current")
+        expect(screen.getByRole("link", {hidden: true, name: "Home"})).toHaveAttribute("href", "/")
+    })
+
+    it("uses client-side navigation for page links when available", async () => {
+        const onNavigate = vi.fn()
+        renderNavbar("/multiAgentAccelerator", onNavigate)
+
+        await user.click(screen.getByRole("link", {hidden: true, name: "User Guide"}))
+
+        expect(onNavigate).toHaveBeenCalledWith("/UserGuide")
+    })
+
+    it("closes the profile menu on Escape", async () => {
+        renderNavbar()
+        await user.click(await screen.findByRole("button", {name: "User dropdown toggle"}))
+        await screen.findByText("Sign out")
+
+        await user.keyboard("{Escape}")
+
+        await waitFor(() => expect(screen.queryByText("Sign out")).not.toBeInTheDocument())
+    })
+
+    it("closes the explore menu on Escape", async () => {
+        renderNavbar()
+        await user.click(await screen.findByText("Explore"))
+        await screen.findByText("Neuro-san (core)")
+
+        await user.keyboard("{Escape}")
+
+        await waitFor(() => expect(screen.queryByText("Neuro-san (core)")).not.toBeInTheDocument())
+    })
+
+    it("closes the contact us dialog when cancelled", async () => {
+        renderNavbar()
+        await user.click(await screen.findByText("Help"))
+        await user.click(await screen.findByText("Contact Us"))
+        await screen.findByText(getContactUsConfirmationText(MOCK_EMAIL_ADDRESS))
+
+        await user.click(screen.getByText("Cancel"))
+
+        await waitFor(() =>
+            expect(screen.queryByText(getContactUsConfirmationText(MOCK_EMAIL_ADDRESS))).not.toBeInTheDocument()
+        )
+    })
+
+    it("clears the hovered page link when the pointer leaves or focus is lost", async () => {
+        renderNavbar("/multiAgentAccelerator")
+        const link = screen.getByRole("link", {hidden: true, name: "User Guide"})
+        const nav = document.getElementById("nav-bar-links")
+
+        await user.hover(link)
+        await user.unhover(link)
+        await user.hover(link)
+        await user.unhover(nav)
+        // The links are hidden at jsdom's window width, and hidden elements can't take real focus, so dispatch the
+        // events. The highlight pill (an aria-hidden sibling of the link) follows the focused link, then returns to the
+        // active one.
+        const hasIndicator = (element: HTMLElement) =>
+            element.parentElement.querySelector(":scope > [aria-hidden=true]") !== null
+        fireEvent.focus(link)
+        expect(hasIndicator(link)).toBe(true)
+        fireEvent.blur(link)
+        expect(hasIndicator(link)).toBe(false)
+    })
+
+    it("opens the command palette from the search pill", async () => {
+        const onOpen = vi.fn()
+        window.addEventListener(OPEN_COMMAND_PALETTE_EVENT_NAME, onOpen)
+        renderNavbar()
+
+        await user.click(screen.getByRole("button", {name: "Open command palette"}))
+
+        expect(onOpen).toHaveBeenCalledTimes(1)
+        window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT_NAME, onOpen)
+    })
+
+    it("closes the help menu on Escape", async () => {
+        renderNavbar()
+        await user.click(await screen.findByText("Help"))
+        await screen.findByText("User guide")
+
+        await user.keyboard("{Escape}")
+
+        await waitFor(() => expect(screen.queryByText("User guide")).not.toBeInTheDocument())
+    })
+
+    it("starts the tour from the help menu", async () => {
+        const onStartTour = vi.fn()
+        renderNavbar("/projects", undefined, {onStartTour})
+
+        await user.click(await screen.findByText("Help"))
+        await user.click(await screen.findByText("Take a tour"))
+
+        expect(onStartTour).toHaveBeenCalledTimes(1)
+    })
+
+    it("does not use client-side navigation when a modifier key is held", () => {
+        const onNavigate = vi.fn()
+        const preventNavigation = (event: Event) => event.preventDefault()
+        document.addEventListener("click", preventNavigation)
+        renderNavbar("/multiAgentAccelerator", onNavigate)
+
+        fireEvent.click(screen.getByRole("link", {hidden: true, name: "User Guide"}), {metaKey: true})
+
+        document.removeEventListener("click", preventNavigation)
+        expect(onNavigate).not.toHaveBeenCalled()
+    })
+
+    it("preserves the query string in the logo link", async () => {
+        renderNavbar("/projects", undefined, {query: {foo: "bar"}})
+
+        const logoLink = await screen.findByRole("link", {name: `${LOGO} Decisioning`})
+
+        expect(logoLink).toHaveAttribute("href", "/?foo=bar")
+    })
+
+    it("omits the sign out item when authentication is disabled", async () => {
+        renderNavbar("/projects", undefined, {enableAuthentication: false})
+
+        await user.click(await screen.findByRole("button", {name: "User dropdown toggle"}))
+        await screen.findByText("Signed in as")
+
+        expect(screen.queryByText("Sign out")).not.toBeInTheDocument()
+    })
+
+    it("does not toggle dark mode while customer branding is active", async () => {
+        useSettingsStore.getState().updateSettings({branding: {customer: "Acme"}})
+        renderNavbar()
+        const darkModeToggle = await screen.findByTestId("DarkModeIcon")
+
+        await user.click(darkModeToggle)
+
+        // Still light mode: icon keeps the secondary text color
+        expect(darkModeToggle).toHaveStyle({color: createTheme({palette: {mode: "light"}}).palette.text.secondary})
+    })
+
+    it("renders with plain transitions when reduced motion is preferred", async () => {
+        reducedMotion.value = true
+        renderNavbar("/multiAgentAccelerator")
+
+        expect(await screen.findByRole("link", {hidden: true, name: "User Guide"})).toBeInTheDocument()
+    })
+
+    it("toggles back to light mode from dark mode", async () => {
+        renderNavbar()
+        const darkModeToggle = await screen.findByTestId("DarkModeIcon")
+
+        await user.click(darkModeToggle)
+        await user.click(darkModeToggle)
+
+        expect(darkModeToggle).toHaveStyle({color: createTheme({palette: {mode: "light"}}).palette.text.secondary})
+    })
+
+    it("omits the user menu when there is no user info", () => {
+        renderNavbar("/projects", undefined, {userInfo: undefined})
+
+        expect(screen.queryByRole("button", {name: "User dropdown toggle"})).not.toBeInTheDocument()
+    })
+})

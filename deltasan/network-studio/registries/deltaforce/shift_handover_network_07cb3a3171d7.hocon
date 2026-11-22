@@ -1,0 +1,23 @@
+{
+include "config/llm_config.hocon"
+
+  "metadata": {
+    "description": "Shift Handover Network"
+  },
+  "max_execution_seconds": 120,
+  "tools": [
+    {
+      "name": "Coordinator",
+      "function": {
+        "description": "Coordinate the shift handover process"
+      },
+      "instructions": "Coordinate the shift handover process\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://agenttools.wolfram.com/mcp",
+        "https://mcp.firecrawl.dev/v2/mcp",
+        "https://worldclock.pro/mcp",
+        "https://mcp.fxmacrodata.com"
+      ]
+    }
+  ]
+}

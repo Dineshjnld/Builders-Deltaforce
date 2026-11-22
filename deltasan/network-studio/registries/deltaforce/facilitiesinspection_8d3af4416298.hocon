@@ -1,0 +1,61 @@
+{
+include "config/llm_config.hocon"
+
+  "metadata": {
+    "description": "FacilitiesInspection · InspectionHandover"
+  },
+  "max_execution_seconds": 120,
+  "tools": [
+    {
+      "name": "Coordinator",
+      "function": {
+        "description": "InspectionHandover"
+      },
+      "instructions": "Use only the supplied materials. Flag missing evidence. Return recommendations for human review. Delegate to the specialists and combine their findings. InspectionHandover",
+      "tools": [
+        "FacilitiesInspection",
+        "FacilitiesOwner"
+      ]
+    },
+    {
+      "name": "FacilitiesInspection",
+      "function": {
+        "description": "GenerateInspectionReport",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and source material"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Use only the supplied materials. Flag missing evidence. Return recommendations for human review. GenerateInspectionReport",
+      "tools": []
+    },
+    {
+      "name": "FacilitiesOwner",
+      "function": {
+        "description": "VerifyOwnership",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and source material"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Use only the supplied materials. Flag missing evidence. Return recommendations for human review. VerifyOwnership",
+      "tools": []
+    }
+  ]
+}

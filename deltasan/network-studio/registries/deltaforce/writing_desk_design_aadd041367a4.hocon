@@ -1,0 +1,49 @@
+{
+include "config/llm_config.hocon"
+
+  "metadata": {
+    "description": "Writing Desk Design"
+  },
+  "max_execution_seconds": 120,
+  "tools": [
+    {
+      "name": "LeadEditor",
+      "function": {
+        "description": "Edit and refine the content"
+      },
+      "instructions": "Edit and refine the content\nCall CopyEditor when Review and correct spelling, grammar, and style.\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "CopyEditor",
+        "https://agenttools.wolfram.com/mcp",
+        "https://mcp.firecrawl.dev/v2/mcp",
+        "https://worldclock.pro/mcp",
+        "https://mcp.fxmacrodata.com"
+      ]
+    },
+    {
+      "name": "CopyEditor",
+      "function": {
+        "description": "Review and correct spelling, grammar, and style",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Review and correct spelling, grammar, and style\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://agenttools.wolfram.com/mcp",
+        "https://mcp.firecrawl.dev/v2/mcp",
+        "https://worldclock.pro/mcp",
+        "https://mcp.fxmacrodata.com"
+      ]
+    }
+  ]
+}

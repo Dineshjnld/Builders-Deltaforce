@@ -1,0 +1,1 @@
+{"title":"Shift Handover Network","agents":[{"id":"a0","name":"Coordinator","task":"Coordinate the shift handover process","tools":["mcp_8a56f66dd1d9","mcp_af20658b0cec","mcp_5f77b5440f68","mcp_bf237a235b52"],"x":20,"y":95}],"routes":[]}

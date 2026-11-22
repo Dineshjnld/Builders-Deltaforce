@@ -1,0 +1,657 @@
+/*
+Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+import {withStrictMocks} from "../../../../../../__tests__/common/strictMocks"
+import {KNOWN_MESSAGE_TYPES_FOR_PLASMA} from "../../../../components/AgentChat/Common/Utils"
+import {
+    FRONTMAN_SIZE_MULTIPLIER,
+    NODE_HEIGHT,
+    NODE_WIDTH,
+} from "../../../../components/MultiAgentAccelerator/AgentFlow/AgentNode"
+import {
+    addThoughtBubbleEdge,
+    layoutLinear,
+    LayoutOptions,
+    layoutRadial,
+    MAX_GLOBAL_THOUGHT_BUBBLES,
+} from "../../../../components/MultiAgentAccelerator/AgentFlow/GraphLayouts"
+import {DEFAULT_FRONTMAN_X_POS, DEFAULT_FRONTMAN_Y_POS} from "../../../../components/MultiAgentAccelerator/const"
+import {ThoughtBubbleEdgeShape} from "../../../../components/MultiAgentAccelerator/ThoughtBubbles/ThoughtBubbleEdge"
+import {ChatMessageType, ConnectivityInfo} from "../../../../generated/neuro-san/NeuroSanClient"
+
+const defaultLayoutParams: LayoutOptions = {
+    agentCounts: new Map(),
+    agentIconSuggestions: undefined,
+    agentsInNetwork: [],
+    currentConversations: [],
+    isAgentNetworkDesignerMode: false,
+    isAwaitingLlm: false,
+    isTemporaryNetwork: false,
+    thoughtBubbleEdges: new Map(),
+    useNativeNames: false,
+}
+
+describe("GraphLayouts", () => {
+    withStrictMocks()
+
+    const threeAgentNetwork: ConnectivityInfo[] = [
+        {origin: "agent1", tools: ["agent2"]},
+        {origin: "agent2", tools: ["agent3"]},
+        {origin: "agent3", tools: []},
+    ]
+
+    const sevenAgentNetwork: ConnectivityInfo[] = [
+        {origin: "agent1", tools: ["agent2", "agent3", "agent4"]},
+        {origin: "agent2", tools: ["agent5"]},
+        {origin: "agent3", tools: ["agent6"]},
+        {origin: "agent4", tools: ["agent7"]},
+        {origin: "agent5", tools: []},
+        {origin: "agent6", tools: []},
+        {origin: "agent7", tools: []},
+    ]
+
+    const networkWithCycles: ConnectivityInfo[] = [
+        {origin: "agent1", tools: ["agent2", "agent4"]},
+        {origin: "agent2", tools: ["agent3"]},
+        {origin: "agent3", tools: ["agent2"]}, // Cycle back to agent2
+        {origin: "agent4", tools: ["agent4"]}, // Self-loop
+    ]
+
+    const singleNodeNetwork: ConnectivityInfo[] = [{origin: "agent1", tools: []}]
+
+    const disconnectedGraph: ConnectivityInfo[] = [
+        {origin: "agent1", tools: ["agent2"]},
+        {origin: "agent2", tools: []},
+        {origin: "agent3", tools: ["agent4"]},
+        {origin: "agent4", tools: []},
+    ]
+
+    const transitiveGraph: ConnectivityInfo[] = [
+        {origin: "agent1", tools: ["agent2", "agent3"]},
+        {origin: "agent2", tools: ["agent3"]},
+        {origin: "agent3", tools: []},
+    ]
+
+    const graphWithoutFrontMan: ConnectivityInfo[] = [{origin: undefined, tools: ["agent2"]}]
+
+    it("Should generate a linear layout", () => {
+        const {nodes, edges} = layoutLinear({
+            ...defaultLayoutParams,
+            agentsInNetwork: threeAgentNetwork,
+        })
+
+        expect(nodes).toHaveLength(3)
+        expect(edges).toHaveLength(2)
+
+        // Check that the nodes are correct
+        threeAgentNetwork
+            .map((agent) => agent.origin)
+            .forEach((agent) => {
+                expect(nodes.map((node) => node.id)).toContain(agent)
+            })
+
+        // Check that the edges are correct
+        // agent1 -> agent2
+        expect(edges.some((edge) => edge.source === "agent1" && edge.target === "agent2")).toBe(true)
+        // agent2 -> agent3
+        expect(edges.some((edge) => edge.source === "agent2" && edge.target === "agent3")).toBe(true)
+        // agent1 -> agent3 (negative case: not connected)
+        expect(edges.some((edge) => edge.source === "agent1" && edge.target === "agent3")).toBe(false)
+
+        // Check that the nodes are in the correct position
+        expect(nodes[0].position.x).toBeLessThan(nodes[1].position.x)
+        expect(nodes[1].position.x).toBeLessThan(nodes[2].position.x)
+    })
+
+    it("Should generate a radial layout", () => {
+        const {nodes, edges} = layoutRadial({
+            ...defaultLayoutParams,
+            agentsInNetwork: sevenAgentNetwork,
+        })
+
+        expect(nodes).toHaveLength(7)
+        expect(edges).toHaveLength(6)
+
+        // Check that the nodes are correct
+        // Should have a node with id agent1 but not necessarily the first
+        sevenAgentNetwork
+            .map((agent) => agent.origin)
+            .forEach((agent) => {
+                expect(nodes.map((node) => node.id)).toContain(agent)
+            })
+
+        // Check that the edges are correct
+        // agent1 -> agent2
+        expect(edges.some((edge) => edge.source === "agent1" && edge.target === "agent2")).toBe(true)
+        // agent1 -> agent3.
+        expect(edges.some((edge) => edge.source === "agent1" && edge.target === "agent3")).toBe(true)
+        // agent1 -> agent4
+        expect(edges.some((edge) => edge.source === "agent1" && edge.target === "agent4")).toBe(true)
+        // agent2 -> agent5
+        expect(edges.some((edge) => edge.source === "agent2" && edge.target === "agent5")).toBe(true)
+        // agent3 -> agent6
+        expect(edges.some((edge) => edge.source === "agent3" && edge.target === "agent6")).toBe(true)
+        // agent4 -> agent7
+        expect(edges.some((edge) => edge.source === "agent4" && edge.target === "agent7")).toBe(true)
+
+        // Check that the nodes are in roughly the correct position
+        // agent1 should be at the center
+        expect(nodes[0].position.x).toBe(DEFAULT_FRONTMAN_X_POS - (NODE_WIDTH * (FRONTMAN_SIZE_MULTIPLIER - 1)) / 2)
+        expect(nodes[0].position.y).toBe(DEFAULT_FRONTMAN_Y_POS - (NODE_HEIGHT * (FRONTMAN_SIZE_MULTIPLIER - 1)) / 2)
+
+        // agents2 and 5 should be right of frontman
+        const agent2 = nodes.find((node) => node.id === "agent2")
+        const agent5 = nodes.find((node) => node.id === "agent5")
+
+        expect(agent2.position.x).toBeGreaterThan(DEFAULT_FRONTMAN_X_POS)
+        expect(agent5.position.x).toBeGreaterThan(DEFAULT_FRONTMAN_X_POS)
+
+        // agent2 right of agent5
+        expect(agent5.position.x).toBeGreaterThan(agent2.position.x)
+
+        // agent3 should be left of frontman
+        const agent3 = nodes.find((node) => node.id === "agent3")
+        expect(agent3.position.x).toBeLessThan(DEFAULT_FRONTMAN_X_POS)
+
+        // agent6 should be left of frontman
+        const agent6 = nodes.find((node) => node.id === "agent6")
+        expect(agent6.position.x).toBeLessThan(DEFAULT_FRONTMAN_X_POS)
+
+        // agent6 should be left of agent3
+        expect(agent6.position.x).toBeLessThan(agent3.position.x)
+
+        // agents4 and 7 should be left of frontman
+        const agent4 = nodes.find((node) => node.id === "agent4")
+        const agent7 = nodes.find((node) => node.id === "agent7")
+
+        expect(agent4.position.x).toBeLessThan(DEFAULT_FRONTMAN_X_POS)
+        expect(agent7.position.x).toBeLessThan(DEFAULT_FRONTMAN_X_POS)
+
+        // agent7 should be left of agent4
+        expect(agent7.position.x).toBeLessThan(agent4.position.x)
+    })
+
+    it("Should handle cycles in the graph", () => {
+        const {nodes, edges} = layoutRadial({
+            ...defaultLayoutParams,
+            agentsInNetwork: networkWithCycles,
+        })
+
+        expect(nodes).toHaveLength(4)
+
+        // Should have 3 edges: agent1 -> agent2, agent1 -> agent4, agent2 -> agent3
+        // Should _not_ have the cycle agent3 -> agent2 nor the self-loop agent4 -> agent4
+        expect(edges).toHaveLength(3)
+
+        // Check that the nodes are correct
+        networkWithCycles
+            .map((agent) => agent.origin)
+            .forEach((agent) => {
+                expect(nodes.map((node) => node.id)).toContain(agent)
+            })
+
+        // Check that the edges are correct
+        // agent1 -> agent2
+        expect(edges.some((edge) => edge.source === "agent1" && edge.target === "agent2")).toBe(true)
+        // agent2 -> agent3
+        expect(edges.some((edge) => edge.source === "agent2" && edge.target === "agent3")).toBe(true)
+        // agent3 -> agent2. We skip cycles, so this edge should not exist.
+        expect(edges.some((edge) => edge.source === "agent3" && edge.target === "agent2")).toBe(false)
+        // agent4 -> agent4. We skip cycles, so this "self edge" should not exist.
+        expect(edges.some((edge) => edge.source === "agent4" && edge.target === "agent4")).toBe(false)
+    })
+
+    it("Should handle direct and transitive dependencies in the graph", async () => {
+        const {nodes, edges} = layoutRadial({
+            ...defaultLayoutParams,
+            agentsInNetwork: transitiveGraph,
+        })
+
+        // Check nodes
+        expect(nodes).toHaveLength(3)
+
+        // Check edges
+        // Should be 3 edges: agent1 -> agent2, agent1 -> agent3, agent2 -> agent3
+        expect(edges).toHaveLength(3)
+
+        // agent1 -> agent2
+        expect(edges.some((edge) => edge.source === "agent1" && edge.target === "agent2")).toBe(true)
+
+        // agent1 -> agent3
+        expect(edges.some((edge) => edge.source === "agent1" && edge.target === "agent3")).toBe(true)
+
+        // agent2 -> agent3
+        expect(edges.some((edge) => edge.source === "agent2" && edge.target === "agent3")).toBe(true)
+    })
+
+    it("filters edges to only include those between conversation agents", () => {
+        const agents: ConnectivityInfo[] = [
+            {origin: "a", tools: ["b"]},
+            {origin: "b", tools: []},
+        ]
+
+        const agentCounts = new Map<string, number>([
+            ["a", 1],
+            ["b", 1],
+        ])
+
+        // currentConversations indicates a conversation between a and b
+        const conversations = [
+            {
+                agents: new Set(["a", "b"]),
+                id: "conv1",
+                startedAt: new Date(),
+                type: ChatMessageType.AGENT,
+            },
+        ]
+
+        const {edges} = layoutLinear({
+            ...defaultLayoutParams,
+            agentCounts,
+            agentsInNetwork: agents,
+            currentConversations: conversations,
+            isAwaitingLlm: true,
+        })
+
+        // There should be at least one edge in the array since a->b is a conversation agent edge
+        expect(edges).toEqual(expect.arrayContaining([expect.objectContaining({source: "a", target: "b"})]))
+    })
+
+    it.each([
+        {layoutFunction: layoutRadial, name: "radial"},
+        {layoutFunction: layoutLinear, name: "linear"},
+    ])('$name layout includes all edges when in Agent Network Designer preview mode"', ({layoutFunction}) => {
+        const agents: ConnectivityInfo[] = [
+            {origin: "a", tools: ["b", "c"]},
+            {origin: "b", tools: []},
+            {origin: "c", tools: []},
+        ]
+
+        // Should include all edges from a->b and a->c since we're simulating Agent Network Designer mode
+        const {edges} = layoutFunction({
+            ...defaultLayoutParams,
+            agentsInNetwork: agents,
+            isAgentNetworkDesignerMode: true,
+            isAwaitingLlm: true,
+        })
+        expect(edges).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({source: "a", target: "b"}),
+                expect.objectContaining({source: "a", target: "c"}),
+            ])
+        )
+    })
+
+    describe("Node data", () => {
+        const network: ConnectivityInfo[] = [
+            {origin: "front_man", tools: ["sub_agent"], display_as: "llm_agent"},
+            {origin: "sub_agent", tools: [], display_as: "llm_agent"},
+        ]
+
+        it.each([
+            {layoutFunction: layoutRadial, name: "radial"},
+            {layoutFunction: layoutLinear, name: "linear"},
+        ])("$name layout exposes native or cleaned names and live conversations", ({layoutFunction}) => {
+            const conversations = [
+                {
+                    agents: new Set(["front_man"]),
+                    id: "c1",
+                    startedAt: undefined as unknown as Date,
+                    type: ChatMessageType.AI,
+                },
+            ]
+
+            const native = layoutFunction({
+                ...defaultLayoutParams,
+                agentsInNetwork: network,
+                currentConversations: conversations,
+                useNativeNames: true,
+            })
+            const cleaned = layoutFunction({...defaultLayoutParams, agentsInNetwork: network, useNativeNames: false})
+
+            expect(native.nodes.map((node) => node.data.agentName)).toEqual(["front_man", "sub_agent"])
+            expect(cleaned.nodes.map((node) => node.data.agentName)).not.toEqual(["front_man", "sub_agent"])
+
+            // The conversations getter hands back the live conversations it was given
+            expect(native.nodes[0].data.getConversations()).toBe(conversations)
+            expect(cleaned.nodes[0].data.getConversations()).toEqual([])
+        })
+
+        it.each([
+            {layoutFunction: layoutRadial, name: "radial"},
+            {layoutFunction: layoutLinear, name: "linear"},
+        ])("$name layout creates no animated edges when there are no conversations", ({layoutFunction}) => {
+            const {edges} = layoutFunction({
+                ...defaultLayoutParams,
+                agentsInNetwork: network,
+                currentConversations: null,
+            })
+
+            expect(edges).toHaveLength(1)
+            expect(edges[0].type).toBeUndefined()
+        })
+
+        it.each([
+            {layoutFunction: layoutRadial, name: "radial"},
+            {layoutFunction: layoutLinear, name: "linear"},
+        ])("$name layout marks LLM agents editable only in temporary networks", ({layoutFunction}) => {
+            // Omit isTemporaryNetwork entirely to exercise its default
+            const {isTemporaryNetwork: _omitted, ...withoutTemporaryFlag} = defaultLayoutParams
+            const permanent = layoutFunction({...withoutTemporaryFlag, agentsInNetwork: network})
+            const temporary = layoutFunction({
+                ...defaultLayoutParams,
+                agentsInNetwork: network,
+                isTemporaryNetwork: true,
+            })
+
+            expect(permanent.nodes.every((node) => node.data.isEditable === false)).toBe(true)
+            expect(temporary.nodes.every((node) => node.data.isEditable === true)).toBe(true)
+        })
+    })
+
+    describe("Plasma edges and known message types", () => {
+        it.each([
+            {layoutFunction: layoutRadial, name: "radial"},
+            {layoutFunction: layoutLinear, name: "linear"},
+        ])("$name layout: creates plasma edge for all supported conversation types", ({layoutFunction}) => {
+            const agents: ConnectivityInfo[] = [
+                {origin: "a", tools: ["b"]},
+                {origin: "b", tools: []},
+            ]
+
+            const agentCounts = new Map<string, number>([
+                ["a", 1],
+                ["b", 1],
+            ])
+
+            // For each supported type in KNOWN_MESSAGE_TYPES_FOR_PLASMA ensure a plasma edge is produced
+            KNOWN_MESSAGE_TYPES_FOR_PLASMA.forEach((msgType) => {
+                const conversations = [
+                    {
+                        agents: new Set(["a", "b"]),
+                        id: `conv-${msgType}`,
+                        startedAt: new Date(),
+                        type: msgType,
+                    },
+                ]
+
+                const {edges} = layoutFunction({
+                    ...defaultLayoutParams,
+                    agentCounts,
+                    agentsInNetwork: agents,
+                    currentConversations: conversations,
+                    isAwaitingLlm: true,
+                })
+
+                // Expect an animated/plasma edge to exist for the conversation between a -> b
+                expect(edges.some((e) => e.source === "a" && e.target === "b" && e.type === "plasmaEdge")).toBeTruthy()
+            })
+        })
+
+        it.each([
+            {layoutFunction: layoutRadial, name: "radial"},
+            {layoutFunction: layoutLinear, name: "linear"},
+        ])("$name layout: does NOT create plasma edge for excluded conversation type (HUMAN)", ({layoutFunction}) => {
+            const agents: ConnectivityInfo[] = [
+                {origin: "a", tools: ["b"]},
+                {origin: "b", tools: []},
+            ]
+
+            const agentCounts = new Map<string, number>([
+                ["a", 1],
+                ["b", 1],
+            ])
+
+            const conversations = [
+                {
+                    agents: new Set(["a", "b"]),
+                    id: "conv1",
+                    startedAt: new Date(),
+                    type: ChatMessageType.HUMAN,
+                },
+            ]
+
+            const {edges} = layoutFunction({
+                ...defaultLayoutParams,
+                agentCounts,
+                agentsInNetwork: agents,
+                currentConversations: conversations,
+                isAwaitingLlm: true,
+            })
+
+            // Since HUMAN is omitted from KNOWN_MESSAGE_TYPES_FOR_PLASMA, there should be no plasma edge
+            expect(edges.some((e) => e.type === "plasmaEdge")).toBeFalsy()
+
+            // And there should be no edge between a and b when awaiting LLM (filtered out)
+            expect(edges.some((e) => e.source === "a" && e.target === "b")).toBeFalsy()
+        })
+    })
+
+    it.each([
+        {layoutFunction: layoutRadial, name: "radial"},
+        {layoutFunction: layoutLinear, name: "linear"},
+    ])("Should handle a degenerate single-node graph in $name layout", async ({layoutFunction}) => {
+        const {nodes, edges} = layoutFunction({
+            ...defaultLayoutParams,
+            agentsInNetwork: singleNodeNetwork,
+        })
+
+        expect(nodes).toHaveLength(1)
+        expect(edges).toHaveLength(0)
+
+        expect(nodes[0]?.id).toBe("agent1")
+    })
+
+    it.each([
+        {layoutFunction: layoutRadial, name: "radial"},
+        {layoutFunction: layoutLinear, name: "linear"},
+    ])("Should handle a disconnected graph in $name layout", ({layoutFunction}) => {
+        // We don't really support this case; "should never happen". This test is to make sure we at least
+        // don't crash. This also exercises the (invalid) "multiple frontmen" case
+        const {nodes, edges} = layoutFunction({
+            ...defaultLayoutParams,
+            agentsInNetwork: disconnectedGraph,
+        })
+
+        expect(nodes.length).toBeGreaterThanOrEqual(0) // undefined behavior with bad input
+        expect(edges.length).toBeGreaterThanOrEqual(0) // undefined behavior with bad input
+    })
+
+    it.each([
+        {layoutFunction: layoutRadial, name: "radial", expectedNodes: 0, expectedEdges: 0},
+        {layoutFunction: layoutLinear, name: "linear", expectedNodes: 1, expectedEdges: 0},
+    ])("Should handle a graph with no frontman in $name layout", ({expectedEdges, expectedNodes, layoutFunction}) => {
+        // This is an invalid case. Every network should have a frontman. But let's at least make sure we don't crash.
+        const {nodes, edges} = layoutFunction({
+            ...defaultLayoutParams,
+            agentsInNetwork: graphWithoutFrontMan,
+        })
+
+        expect(nodes.length).toEqual(expectedNodes)
+        expect(edges.length).toEqual(expectedEdges)
+    })
+
+    describe("Thought Bubble Edge Management", () => {
+        const mockEdge: ThoughtBubbleEdgeShape = {
+            id: "edge1",
+            source: "node1",
+            target: "node2",
+            type: "thoughtBubbleEdge",
+            data: {text: "Test message"},
+        }
+
+        const mockEdge2: ThoughtBubbleEdgeShape = {
+            id: "edge2",
+            source: "node3",
+            target: "node4",
+            type: "thoughtBubbleEdge",
+            data: {text: "Test message"},
+        }
+
+        let thoughtBubbleEdgesMap: Map<string, {edge: ThoughtBubbleEdgeShape; timestamp: number}>
+
+        beforeEach(() => {
+            thoughtBubbleEdgesMap = new Map()
+        })
+
+        it("Should add and retrieve global thought bubble edges", () => {
+            addThoughtBubbleEdge(thoughtBubbleEdgesMap, "conv1", mockEdge)
+
+            const {edges} = layoutRadial({
+                ...defaultLayoutParams,
+                agentsInNetwork: threeAgentNetwork,
+                isAgentNetworkDesignerMode: true,
+                thoughtBubbleEdges: thoughtBubbleEdgesMap,
+            })
+            const thoughtBubbleEdges = edges.filter((e) => e.type === "thoughtBubbleEdge")
+
+            expect(thoughtBubbleEdges).toHaveLength(1)
+            expect(thoughtBubbleEdges[0]).toEqual(
+                expect.objectContaining({
+                    id: "edge1",
+                    source: "node1",
+                    target: "node2",
+                })
+            )
+        })
+
+        it("Should enforce max thought bubble limit", () => {
+            // Add more than MAX_GLOBAL_THOUGHT_BUBBLES (5) edges
+            for (let i = 0; i < MAX_GLOBAL_THOUGHT_BUBBLES + 2; i += 1) {
+                const mockEdgeMultiple: ThoughtBubbleEdgeShape = {
+                    id: `edge${i}`,
+                    source: "node1",
+                    target: "node2",
+                    type: "thoughtBubbleEdge",
+                    data: {text: `Unique message ${i}`},
+                }
+                addThoughtBubbleEdge(thoughtBubbleEdgesMap, `conv${i}`, mockEdgeMultiple)
+            }
+
+            const {edges} = layoutRadial({
+                ...defaultLayoutParams,
+                agentsInNetwork: threeAgentNetwork,
+                isAwaitingLlm: true,
+                thoughtBubbleEdges: thoughtBubbleEdgesMap,
+            })
+            const thoughtBubbleEdges = edges.filter((e) => e.type === "thoughtBubbleEdge")
+
+            expect(thoughtBubbleEdges).toHaveLength(5)
+        })
+
+        it("Should clear all thought bubble edges", () => {
+            addThoughtBubbleEdge(thoughtBubbleEdgesMap, "conv1", mockEdge)
+            addThoughtBubbleEdge(thoughtBubbleEdgesMap, "conv2", mockEdge2)
+            thoughtBubbleEdgesMap.clear()
+
+            const {edges} = layoutRadial({
+                ...defaultLayoutParams,
+                agentsInNetwork: threeAgentNetwork,
+                isAwaitingLlm: true,
+                thoughtBubbleEdges: thoughtBubbleEdgesMap,
+            })
+            const thoughtBubbleEdges = edges.filter((e) => e.type === "thoughtBubbleEdge")
+
+            expect(thoughtBubbleEdges).toHaveLength(0)
+        })
+
+        it.each([
+            {layoutFunction: layoutRadial, name: "radial"},
+            {layoutFunction: layoutLinear, name: "linear"},
+        ])("$name layout: should add thought bubble from cache when no duplicate ids exist", ({layoutFunction}) => {
+            const singleNodeMap = new Map<string, {edge: ThoughtBubbleEdgeShape; timestamp: number}>()
+            const bubble: ThoughtBubbleEdgeShape = {
+                id: "tb1",
+                source: "A",
+                target: "B",
+                type: "thoughtBubbleEdge",
+                data: {text: "x"},
+            }
+            addThoughtBubbleEdge(singleNodeMap, "conv-x", bubble)
+
+            const {edges} = layoutFunction({
+                ...defaultLayoutParams,
+                agentsInNetwork: [{origin: "A", tools: []}],
+                isAwaitingLlm: true,
+                thoughtBubbleEdges: singleNodeMap,
+            })
+            const bubbleEdges = edges.filter((e) => e.type === "thoughtBubbleEdge")
+            expect(bubbleEdges).toHaveLength(1)
+            expect(bubbleEdges[0].id).toBe("tb1")
+        })
+
+        it.each([
+            {layoutFunction: layoutRadial, name: "radial"},
+            {layoutFunction: layoutLinear, name: "linear"},
+        ])("$name layout: should add thought bubble when network already has non-thought edges", ({layoutFunction}) => {
+            const tbMap = new Map<string, {edge: ThoughtBubbleEdgeShape; timestamp: number}>()
+            const bubble: ThoughtBubbleEdgeShape = {
+                id: "should-add",
+                source: "agent1",
+                target: "agent2",
+                type: "thoughtBubbleEdge",
+                data: {text: "Test message"},
+            }
+            addThoughtBubbleEdge(tbMap, "not-add", bubble)
+
+            const agents: ConnectivityInfo[] = [
+                {origin: "agent1", tools: ["agent2"]},
+                {origin: "agent2", tools: []},
+            ]
+
+            const {edges} = layoutFunction({
+                ...defaultLayoutParams,
+                agentsInNetwork: agents,
+                thoughtBubbleEdges: tbMap,
+            })
+            const thoughtBubbleEdges = edges.filter((e) => e.type === "thoughtBubbleEdge")
+            expect(thoughtBubbleEdges).toHaveLength(1)
+            expect(thoughtBubbleEdges[0].id).toBe("should-add")
+        })
+
+        it.each([
+            {layoutFunction: layoutRadial, name: "radial"},
+            {layoutFunction: layoutLinear, name: "linear"},
+        ])(
+            "$name layout: should skip thought bubble when an existing network edge has the same id",
+            ({layoutFunction}) => {
+                const tbMap = new Map<string, {edge: ThoughtBubbleEdgeShape; timestamp: number}>()
+                const bubble: ThoughtBubbleEdgeShape = {
+                    id: "B-edge-A",
+                    source: "A",
+                    target: "B",
+                    type: "thoughtBubbleEdge",
+                }
+                addThoughtBubbleEdge(tbMap, "dup-net", bubble)
+
+                const agents: ConnectivityInfo[] = [
+                    {origin: "A", tools: ["B"]},
+                    {origin: "B", tools: []},
+                ]
+
+                const {edges} = layoutFunction({
+                    ...defaultLayoutParams,
+                    agentsInNetwork: agents,
+                    thoughtBubbleEdges: tbMap,
+                })
+
+                const thoughtBubbleEdges = edges.filter((e) => e.type === "thoughtBubbleEdge")
+                expect(thoughtBubbleEdges).toHaveLength(0)
+                expect(edges.some((e) => e.id === "B-edge-A" && e.type !== "thoughtBubbleEdge")).toBeTruthy()
+            }
+        )
+    })
+})

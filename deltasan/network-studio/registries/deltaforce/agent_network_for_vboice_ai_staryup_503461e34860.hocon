@@ -1,0 +1,261 @@
+{
+include "config/llm_config.hocon"
+
+  "metadata": {
+    "description": "Agent Network for vboice AI Staryup"
+  },
+  "max_execution_seconds": 120,
+  "tools": [
+    {
+      "name": "Coordinator",
+      "function": {
+        "description": "Coordinate the entire network"
+      },
+      "instructions": "Coordinate the entire network\nCall Agent1 when Manage the network's infrastructure.\nCall Agent2 when Handle user requests.\nCall Agent3 when Monitor network performance.\nCall Agent4 when Update the network's documentation.\nCall Agent5 when Perform deep learning tasks.\nCall Agent6 when Manage user interactions.\nCall Agent7 when Handle network security.\nCall Agent8 when Perform data analysis.\nCall Agent9 when Manage the network's resources.\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "Agent1",
+        "Agent2",
+        "Agent3",
+        "Agent4",
+        "Agent5",
+        "Agent6",
+        "Agent7",
+        "Agent8",
+        "Agent9",
+        "http://127.0.0.1:45186/mcp",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "Agent1",
+      "function": {
+        "description": "Manage the network's infrastructure",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Manage the network's infrastructure\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "http://127.0.0.1:45186/mcp",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "Agent2",
+      "function": {
+        "description": "Handle user requests",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Handle user requests\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "http://127.0.0.1:45186/mcp",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "Agent3",
+      "function": {
+        "description": "Monitor network performance",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Monitor network performance\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "http://127.0.0.1:45186/mcp",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "Agent4",
+      "function": {
+        "description": "Update the network's documentation",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Update the network's documentation\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "http://127.0.0.1:45186/mcp",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "Agent5",
+      "function": {
+        "description": "Perform deep learning tasks",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Perform deep learning tasks\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "http://127.0.0.1:45186/mcp",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "Agent6",
+      "function": {
+        "description": "Manage user interactions",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Manage user interactions\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "http://127.0.0.1:45186/mcp",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "Agent7",
+      "function": {
+        "description": "Handle network security",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Handle network security\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "http://127.0.0.1:45186/mcp",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "Agent8",
+      "function": {
+        "description": "Perform data analysis",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Perform data analysis\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "http://127.0.0.1:45186/mcp",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "Agent9",
+      "function": {
+        "description": "Manage the network's resources",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Manage the network's resources\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "http://127.0.0.1:45186/mcp",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "web_fetch",
+      "toolbox": "web_fetch"
+    }
+  ]
+}

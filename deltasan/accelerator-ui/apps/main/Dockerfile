@@ -1,0 +1,118 @@
+#    Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+#    
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+#    
+#        http://www.apache.org/licenses/LICENSE-2.0
+#    
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
+
+#
+# This is the Dockerfile for building the UI/NodeJS Docker image.
+#
+# Taken from here with slight modifications: https://github.com/vercel/next.js/blob/main/examples/with-docker/Dockerfile
+#
+# It uses multi-stage builds for a smaller resulting image 
+#
+
+# This is the major version of NodeJS we will use
+# The currently supported version(s) of Node.js are those in the `engines` field of the package.json file.
+# Build and runtime images should use the same Debian version. The distroless Node runtime is only
+# published for Debian 13 (trixie), so we use trixie-slim for the build stages too.
+ARG NODEJS_VERSION=0
+FROM node:$NODEJS_VERSION-trixie-slim AS deps
+
+ENV NODE_ENV=development
+
+# Disable NextJS spyware
+ENV NEXT_TELEMETRY_DISABLED=1
+
+WORKDIR /app
+COPY .yarnrc.yml ./
+COPY .yarn/plugins/CheckNodeVersion.mjs .yarn/plugins/CheckNodeVersion.mjs
+COPY package.json ./
+COPY yarn.lock ./
+COPY tsconfig.json ./
+COPY packages/dev-common/package.json ./packages/dev-common/
+COPY packages/ui-common ./packages/ui-common
+COPY apps/main/package.json ./apps/main/package.json
+
+# Install all dependencies (including devDependencies) and build ui-common
+# Node 26 no longer bundles corepack, so install it before enabling.
+RUN --mount=type=cache,target=/root/.cache/yarn --mount=type=cache,target=/root/.npm \
+    npm install -g corepack@0.35.0 && \
+    corepack enable && \
+    corepack install && \
+    yarn install --immutable && \
+    yarn build:lib
+
+# Rebuild the source code only when needed
+FROM node:$NODEJS_VERSION-trixie-slim AS builder
+
+ENV NODE_ENV=production
+
+# Disable NextJS spyware
+ENV NEXT_TELEMETRY_DISABLED=1
+
+WORKDIR /app
+
+# Install only production dependencies
+COPY .yarnrc.yml ./
+COPY .yarn/plugins/CheckNodeVersion.mjs .yarn/plugins/CheckNodeVersion.mjs
+COPY package.json ./
+COPY packages/ui-common/package.json ./packages/ui-common/package.json
+COPY packages/dev-common/package.json ./packages/dev-common/package.json
+COPY apps/main/package.json ./apps/main/package.json
+COPY yarn.lock ./
+
+# Copy the full ui-common package from deps (includes source + built dist)
+COPY --from=deps /app/packages/ui-common ./packages/ui-common
+
+RUN --mount=type=cache,target=/root/.cache/yarn --mount=type=cache,target=/root/.npm \
+    npm install -g corepack@0.35.0 && \
+    corepack enable && \
+    corepack install && \
+    yarn install --immutable
+
+# Extra files from build context
+COPY tsconfig.json ./tsconfig.json
+COPY apps/main ./apps/main
+
+# Extract build version
+ARG NEXT_PUBLIC_NEURO_SAN_UI_VERSION
+ENV NEXT_PUBLIC_NEURO_SAN_UI_VERSION=${NEXT_PUBLIC_NEURO_SAN_UI_VERSION}
+
+# Build the Next.js app
+RUN yarn build:app 
+
+
+# Production image, copy all the files and run next
+FROM gcr.io/distroless/nodejs${NODEJS_VERSION}-debian13@sha256:e6ffd0e0ddbbcad0231684befb2c421591c2be46baa71da7d9065294c17efc0d AS runner
+
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Automatically leverage output traces to reduce image size
+# https://nextjs.org/docs/advanced-features/output-file-tracing
+COPY --from=builder /app/apps/main/.next/standalone ./
+COPY --from=builder /app/apps/main/public ./apps/main/public
+COPY --from=builder /app/apps/main/.next/static ./apps/main/.next/static
+
+# The "nonroot" non-privileged user is provided by the base image
+USER nonroot
+
+EXPOSE 3000
+
+# Disable NextJS spyware
+ENV NEXT_TELEMETRY_DISABLED=1
+
+WORKDIR /app/apps/main
+
+# This "server.js" file is generated at compile time by NextJS magic.
+# See: https://nextjs.org/docs/advanced-features/output-file-tracing
+CMD ["server.js"]

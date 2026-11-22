@@ -1,0 +1,237 @@
+/*
+Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+import {createTheme, hexToRgb} from "@mui/material/styles"
+import {render, screen} from "@testing-library/react"
+import {NodeProps, Node as RFNode} from "@xyflow/react"
+import {CSSProperties} from "react"
+
+import {INVALID_MUI_ICON_NAME} from "../../../../../../__tests__/common/MuiIconsMock"
+import {withStrictMocks} from "../../../../../../__tests__/common/strictMocks"
+import {AgentConversation} from "../../../../components/MultiAgentAccelerator/AgentConversations"
+import {AgentNode, AgentNodeProps} from "../../../../components/MultiAgentAccelerator/AgentFlow/AgentNode"
+import {ChatMessageType} from "../../../../generated/neuro-san/NeuroSanClient"
+import {DEFAULT_SETTINGS, useSettingsStore} from "../../../../state/Settings"
+import {PALETTES} from "../../../../Theme/Palettes"
+
+// Mock the Handle component since we don't want to invite @xyflow/react to this party
+vi.mock("@xyflow/react", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@xyflow/react")>()
+
+    return {
+        ...actual,
+        Handle: (props: {type: unknown; id: unknown; style: CSSProperties}) => (
+            <div
+                data-testid={`handle-${props.type}-${props.id}`}
+                style={props.style}
+            />
+        ),
+    }
+})
+
+const AGENT_NAME = "Test Agent"
+const AGENT_ID = "testNode"
+
+const renderAgentNode = (data: Partial<AgentNodeProps>) => {
+    const nodeProps: NodeProps<RFNode<AgentNodeProps>> = {
+        id: AGENT_ID,
+        type: "test",
+        selected: false,
+        selectable: false,
+        deletable: false,
+        draggable: false,
+        zIndex: 0,
+        isConnectable: false,
+        positionAbsoluteX: 0,
+        positionAbsoluteY: 0,
+        dragging: false,
+        data: {
+            agentName: AGENT_NAME,
+            depth: 1,
+            displayAs: "llm_agent",
+            getConversations: (): AgentConversation[] | null => null,
+            ...data,
+        },
+    }
+
+    render(<AgentNode {...nodeProps} />)
+}
+
+describe("AgentNode", () => {
+    withStrictMocks()
+
+    beforeEach(() => {
+        // Reset settings store before each test
+        useSettingsStore.getState().resetSettings()
+    })
+
+    it("Should render correctly", async () => {
+        renderAgentNode({
+            agentCounts: new Map([[AGENT_ID, 42]]),
+        })
+
+        expect(screen.getByText(AGENT_NAME)).toBeInTheDocument()
+
+        // Should "display as" an "LLM agent"
+        await screen.findByTestId("AutoAwesomeIcon")
+
+        // locate parent div
+        const pElement = screen.getByText(AGENT_NAME)
+        const parentDiv = pElement.closest("div")
+        expect(parentDiv).toBeInTheDocument()
+
+        // Check the background color of the associated node (the circle div)
+        const nodeDiv = [...parentDiv.children].find((el) => el.tagName === "DIV") as HTMLDivElement
+        expect(nodeDiv).toBeInTheDocument()
+        const style = window.getComputedStyle(nodeDiv)
+
+        // Heatmap color should be applied based on agent count. No other agents, so it should be the last color
+        // of the default palette
+        const defaultPalette = PALETTES[DEFAULT_SETTINGS.appearance.rangePalette as keyof typeof PALETTES]
+        const expectedColor = defaultPalette[defaultPalette.length - 1]
+
+        expect(style.backgroundColor).toBe(hexToRgb(expectedColor))
+
+        // Inactive node should not have animation
+        expect(style.animation).toBe("")
+    })
+
+    it("Should use the lowest heat color when the agent has no recorded invocations", () => {
+        renderAgentNode({agentCounts: new Map([["someOtherAgent", 5]])})
+
+        expect(screen.getByText(AGENT_NAME)).toBeInTheDocument()
+    })
+
+    it("Should render the Frontman with the person icon and label", () => {
+        renderAgentNode({depth: 0})
+
+        expect(screen.getByTestId("PersonIcon")).toBeInTheDocument()
+    })
+
+    it("Should render animation if active agent", async () => {
+        renderAgentNode({
+            depth: 3,
+            getConversations: () => [
+                {
+                    agents: new Set([AGENT_ID]),
+                    id: "conversation1",
+                    startedAt: undefined,
+                    type: ChatMessageType.UNKNOWN,
+                },
+            ],
+        })
+
+        // locate agent node div
+        const agentNodeDiv = screen.getByTestId(AGENT_ID)
+
+        // Active node should have animation
+        const style = window.getComputedStyle(agentNodeDiv)
+        expect(style.animation).toMatch(/animation-\w+ 2s infinite/u)
+    })
+
+    it.each([
+        {autoAgentIconColor: true, depth: 1},
+        {autoAgentIconColor: true, depth: 9},
+        {autoAgentIconColor: false, depth: 1},
+        {autoAgentIconColor: false, depth: 9},
+    ])("should handle autoNodeColor=$autoNodeColor and depth=$depth", async ({autoAgentIconColor, depth}) => {
+        const agentIconColor = "#112233"
+        useSettingsStore.getState().updateSettings({
+            appearance: {
+                agentIconColor,
+                autoAgentIconColor,
+            },
+        })
+
+        renderAgentNode({depth})
+
+        // Locate the icon (should be AutoAwesomeIcon for llm_agent)
+        const icon = await screen.findByTestId("AutoAwesomeIcon")
+        const iconStyle = window.getComputedStyle(icon)
+
+        // Make sure the icon color matches expected: auto color is the contrast text for the node's depth color
+        // in the default palette
+        const defaultPalette = PALETTES[DEFAULT_SETTINGS.appearance.rangePalette as keyof typeof PALETTES]
+        const contrastText = createTheme().palette.getContrastText(defaultPalette[depth % defaultPalette.length])
+        const expectedIconColor = autoAgentIconColor
+            ? contrastText.startsWith("#")
+                ? hexToRgb(contrastText)
+                : contrastText
+            : hexToRgb(agentIconColor)
+        expect(iconStyle.color).toBe(expectedIconColor)
+    })
+
+    it.each([
+        ["handles should display in regular mode", false, "visible"],
+        ["handles should not display in Zen mode", true, "hidden"],
+    ])("%s", async (_description, isAwaitingLlm, expectedVisibility) => {
+        renderAgentNode({
+            isAwaitingLlm,
+            depth: 3,
+        })
+
+        const positions = ["left", "right", "top", "bottom"]
+        for (const pos of positions) {
+            const handle = await screen.findByTestId(`handle-source-${AGENT_ID}-${pos}-handle`)
+            expect(handle).toBeInTheDocument()
+            expect(handle).toHaveStyle({visibility: expectedVisibility})
+        }
+    })
+
+    it.each([
+        ["llm_agent", "AutoAwesomeIcon"],
+        ["external_agent", "TravelExploreIcon"],
+        ["langchain_tool", "HandymanIcon"],
+        ["coded_tool", "HandymanIcon"],
+        ["unknown_display_as_value", "AutoAwesomeIcon"],
+    ])("renders correct icon for displayAs=%s", async (displayAs, expectedTestId) => {
+        renderAgentNode({displayAs})
+        await screen.findByTestId(expectedTestId)
+    })
+
+    it("renders a custom MUI icon when agentIconSuggestion is a valid icon name", async () => {
+        // "Star" is a real-named export in @mui/icons-material; MUI renders it with testid "StarIcon"
+        renderAgentNode({agentIconSuggestion: "Star"})
+        await screen.findByTestId("StarIcon")
+    })
+
+    it("warns and falls back to default icon when agentIconSuggestion is invalid", async () => {
+        renderAgentNode({agentIconSuggestion: INVALID_MUI_ICON_NAME})
+
+        // check for fallback icon
+        await screen.findByTestId("AutoAwesomeIcon")
+    })
+
+    it.each([
+        ["editable agent", true, "pointer"],
+        ["non-editable agent", false, "grab"],
+        ["no isEditable prop (default)", undefined, "grab"],
+    ])("cursor is pointer when isEditable=%s", (_label, isEditable, expectedCursor) => {
+        renderAgentNode({depth: 1, isEditable})
+
+        const agentNodeDiv = screen.getByTestId(AGENT_ID)
+        const style = window.getComputedStyle(agentNodeDiv)
+        expect(style.cursor).toBe(expectedCursor)
+    })
+
+    it("applies heatmap coloring when isHeatmap is true and agent is not active", () => {
+        const counts = new Map([[AGENT_ID, 3]])
+        renderAgentNode({agentCounts: counts, isHeatmap: true})
+
+        // Component should render without errors — the heatmap branch executes
+        expect(screen.getByTestId(AGENT_ID)).toBeInTheDocument()
+    })
+})

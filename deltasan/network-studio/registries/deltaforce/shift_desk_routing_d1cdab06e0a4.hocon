@@ -1,0 +1,63 @@
+{
+include "config/llm_config.hocon"
+
+  "metadata": {
+    "description": "Shift desk routing"
+  },
+  "max_execution_seconds": 120,
+  "tools": [
+    {
+      "name": "Coordinator",
+      "function": {
+        "description": "Handle clock queries by delegating to TimeDesk. Delegate requests to review a shift handover to Specialist. Return the specialist result."
+      },
+      "instructions": "Handle clock queries by delegating to TimeDesk. Delegate requests to review a shift handover to Specialist. Return the specialist result.\nCall Specialist when The user asks to review a shift handover.\nCall TimeDesk when The user asks for a current date or time.",
+      "tools": [
+        "Specialist",
+        "TimeDesk"
+      ]
+    },
+    {
+      "name": "Specialist",
+      "function": {
+        "description": "Analyze the assigned request and report findings.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Analyze the assigned request and report findings.",
+      "tools": []
+    },
+    {
+      "name": "TimeDesk",
+      "function": {
+        "description": "Call the current_time tool for the requested IANA time zone and quote its result exactly.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Call the current_time tool for the requested IANA time zone and quote its result exactly.\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "http://127.0.0.1:45186/mcp"
+      ]
+    }
+  ]
+}

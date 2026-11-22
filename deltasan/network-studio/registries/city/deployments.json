@@ -1,0 +1,519 @@
+{
+  "document_review_128eef84463a": {
+    "name": "Document review",
+    "org_name": "Studio QA",
+    "updated": 1795313656.8710725,
+    "enabled": true,
+    "agents": [
+      "Coordinator",
+      "Editor",
+      "CopyEditor"
+    ],
+    "connections": [
+      {
+        "from": "Coordinator",
+        "to": "Editor"
+      },
+      {
+        "from": "Coordinator",
+        "to": "CopyEditor"
+      },
+      {
+        "from": "Coordinator",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "Coordinator",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "Coordinator",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "Editor",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "Editor",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "Editor",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "CopyEditor",
+        "to": "web_fetch"
+      },
+      {
+        "from": "CopyEditor",
+        "to": "http://127.0.0.1:45186/mcp"
+      }
+    ]
+  },
+  "document_review_network_5f7222aaa191_e918054347f8": {
+    "name": "document_review_network_5f7222aaa191",
+    "org_name": "Studio QA",
+    "updated": 1795313743.1620574,
+    "enabled": true,
+    "agents": [
+      "Coordinator",
+      "Editor",
+      "CopyEditor"
+    ],
+    "connections": [
+      {
+        "from": "Coordinator",
+        "to": "Editor"
+      },
+      {
+        "from": "Coordinator",
+        "to": "CopyEditor"
+      },
+      {
+        "from": "Coordinator",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "Coordinator",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "Coordinator",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "Editor",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "Editor",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "Editor",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "CopyEditor",
+        "to": "web_fetch"
+      },
+      {
+        "from": "CopyEditor",
+        "to": "http://127.0.0.1:45186/mcp"
+      }
+    ]
+  },
+  "employee_onboarding_network_33c393809412_b72598feb083": {
+    "name": "employee_onboarding_network_33c393809412",
+    "org_name": "equal",
+    "updated": 1795314161.7261674,
+    "enabled": true,
+    "agents": [
+      "Coordinator",
+      "HRManager",
+      "DepartmentManager",
+      "ITSupport",
+      "Finance",
+      "Legal",
+      "TrainingCoordinator",
+      "Recruitment",
+      "OnboardingCoordinator"
+    ],
+    "connections": [
+      {
+        "from": "Coordinator",
+        "to": "HRManager"
+      },
+      {
+        "from": "Coordinator",
+        "to": "DepartmentManager"
+      },
+      {
+        "from": "Coordinator",
+        "to": "ITSupport"
+      },
+      {
+        "from": "Coordinator",
+        "to": "Finance"
+      },
+      {
+        "from": "Coordinator",
+        "to": "Legal"
+      },
+      {
+        "from": "Coordinator",
+        "to": "TrainingCoordinator"
+      },
+      {
+        "from": "Coordinator",
+        "to": "Recruitment"
+      },
+      {
+        "from": "Coordinator",
+        "to": "OnboardingCoordinator"
+      },
+      {
+        "from": "Coordinator",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "Coordinator",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "Coordinator",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "Coordinator",
+        "to": "web_fetch"
+      },
+      {
+        "from": "HRManager",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "HRManager",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "HRManager",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "HRManager",
+        "to": "web_fetch"
+      },
+      {
+        "from": "DepartmentManager",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "DepartmentManager",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "DepartmentManager",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "DepartmentManager",
+        "to": "web_fetch"
+      },
+      {
+        "from": "ITSupport",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "ITSupport",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "ITSupport",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "ITSupport",
+        "to": "web_fetch"
+      },
+      {
+        "from": "Finance",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "Finance",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "Finance",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "Finance",
+        "to": "web_fetch"
+      },
+      {
+        "from": "Legal",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "Legal",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "Legal",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "Legal",
+        "to": "web_fetch"
+      },
+      {
+        "from": "TrainingCoordinator",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "TrainingCoordinator",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "TrainingCoordinator",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "TrainingCoordinator",
+        "to": "web_fetch"
+      },
+      {
+        "from": "Recruitment",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "Recruitment",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "Recruitment",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "Recruitment",
+        "to": "web_fetch"
+      },
+      {
+        "from": "OnboardingCoordinator",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "OnboardingCoordinator",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "OnboardingCoordinator",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "OnboardingCoordinator",
+        "to": "web_fetch"
+      }
+    ]
+  },
+  "hospital_management_network_d780b85dcd56_bf013562d8de": {
+    "name": "hospital_management_network_d780b85dcd56",
+    "org_name": "equal",
+    "updated": 1795314349.9493132,
+    "enabled": true,
+    "agents": [
+      "Coordinator",
+      "FinanceOfficer",
+      "MedicalDirector",
+      "PharmacyManager",
+      "Receptionist",
+      "LabTechnician",
+      "Nurse",
+      "Doctor",
+      "Receptionist_8",
+      "LabTechnician_9"
+    ],
+    "connections": [
+      {
+        "from": "Coordinator",
+        "to": "FinanceOfficer"
+      },
+      {
+        "from": "Coordinator",
+        "to": "MedicalDirector"
+      },
+      {
+        "from": "Coordinator",
+        "to": "PharmacyManager"
+      },
+      {
+        "from": "Coordinator",
+        "to": "Receptionist"
+      },
+      {
+        "from": "Coordinator",
+        "to": "LabTechnician"
+      },
+      {
+        "from": "Coordinator",
+        "to": "Nurse"
+      },
+      {
+        "from": "Coordinator",
+        "to": "Doctor"
+      },
+      {
+        "from": "Coordinator",
+        "to": "Receptionist_8"
+      },
+      {
+        "from": "Coordinator",
+        "to": "LabTechnician_9"
+      },
+      {
+        "from": "Coordinator",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "Coordinator",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "Coordinator",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "Coordinator",
+        "to": "https://agenttools.wolfram.com/mcp"
+      },
+      {
+        "from": "FinanceOfficer",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "FinanceOfficer",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "FinanceOfficer",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "FinanceOfficer",
+        "to": "https://agenttools.wolfram.com/mcp"
+      },
+      {
+        "from": "MedicalDirector",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "MedicalDirector",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "MedicalDirector",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "MedicalDirector",
+        "to": "https://agenttools.wolfram.com/mcp"
+      },
+      {
+        "from": "PharmacyManager",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "PharmacyManager",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "PharmacyManager",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "PharmacyManager",
+        "to": "https://agenttools.wolfram.com/mcp"
+      },
+      {
+        "from": "Receptionist",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "Receptionist",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "Receptionist",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "Receptionist",
+        "to": "https://agenttools.wolfram.com/mcp"
+      },
+      {
+        "from": "LabTechnician",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "LabTechnician",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "LabTechnician",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "LabTechnician",
+        "to": "https://agenttools.wolfram.com/mcp"
+      },
+      {
+        "from": "Nurse",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "Nurse",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "Nurse",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "Nurse",
+        "to": "https://agenttools.wolfram.com/mcp"
+      },
+      {
+        "from": "Doctor",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "Doctor",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "Doctor",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "Doctor",
+        "to": "https://agenttools.wolfram.com/mcp"
+      },
+      {
+        "from": "Receptionist_8",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "Receptionist_8",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "Receptionist_8",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "Receptionist_8",
+        "to": "https://agenttools.wolfram.com/mcp"
+      },
+      {
+        "from": "LabTechnician_9",
+        "to": "https://mcp.deepwiki.com/mcp"
+      },
+      {
+        "from": "LabTechnician_9",
+        "to": "https://api.you.com/mcp?profile=free"
+      },
+      {
+        "from": "LabTechnician_9",
+        "to": "http://127.0.0.1:45186/mcp"
+      },
+      {
+        "from": "LabTechnician_9",
+        "to": "https://agenttools.wolfram.com/mcp"
+      }
+    ]
+  }
+}

@@ -1,0 +1,123 @@
+#    Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+#
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
+
+# ================================================================================
+# Publish UI Common Workflow
+# ================================================================================
+# This workflow publishes @cognizant-ai-lab/ui-common to the public npm registry.
+#
+# Triggers:
+#   1. Push to main (with path filter): Publishes snapshot for CI/CD integration
+#   2. Release published: Publishes official release version
+#   3. Manual workflow_dispatch: For testing purposes
+#
+# Version and dist-tag by trigger:
+#   - Push to main:    <base>-main.<sha>.<run>  with dist-tag "main"
+#   - Release:         <release-tag>            with dist-tag "latest"
+#   - Manual:          <base>-pr.<sha>.<run>    with user-selected dist-tag
+#
+# Authentication:
+#   Uses OIDC trusted publishing - no npm tokens required. Configure the trusted
+#   publisher on npmjs.com with this workflow filename (publish.yml).
+# ================================================================================
+
+name: Publish UI Common
+
+on:
+    push:
+        branches:
+            - main
+        paths:
+            - "packages/ui-common/**"
+    release:
+        types: [published]
+    workflow_dispatch:
+        inputs:
+            dist_tag:
+                description: "npm dist-tag for manual publish"
+                type: choice
+                required: false
+                options:
+                    - prerelease
+                    - next
+                    - beta
+                    - rc
+                    - canary
+                    - dev
+                default: prerelease
+
+permissions:
+    contents: read
+    id-token: write
+
+jobs:
+    publish:
+        runs-on: ubuntu-latest
+        outputs:
+            version: ${{ steps.compute.outputs.version }}
+            dist_tag: ${{ steps.compute.outputs.dist_tag }}
+            sha: ${{ steps.compute.outputs.sha }}
+            short_sha: ${{ steps.compute.outputs.short_sha }}
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  fetch-depth: 0
+
+            - name: Setup Node.js environment
+              id: setup-node
+              # build-common 1.0.9
+              uses: cognizant-ai-lab/build-common/actions/setup-node-env@b14b3de23cb9aca02b2165e57542335e0c8f5304
+              with:
+                  clean-install: "true"
+                  registry-url: https://registry.npmjs.org/
+
+            - name: Generate OpenAPI types
+              run: yarn generate
+
+            - name: Compute version and dist-tag
+              id: compute
+              run: |
+                  ./build_scripts/compute_publish_version.sh \
+                    "${{ github.event_name }}" \
+                    "${{ github.sha }}" \
+                    "${{ github.run_number }}" \
+                    "packages/ui-common/package.json" \
+                    "${{ github.event.release.tag_name }}" \
+                    "${{ inputs.dist_tag }}"
+
+            - name: Set ui-common version
+              run: ./build_scripts/set_package_version.sh packages/ui-common/package.json ${{ steps.compute.outputs.version }}
+
+            - name: Build ui-common library
+              run: yarn build:lib
+
+            # Publish using Yarn 4.12.0+ which supports OIDC trusted publishing.
+            # See: https://github.com/yarnpkg/berry/pull/6898
+            - name: Publish to npm registry
+              run: yarn workspace @cognizant-ai-lab/ui-common npm publish --tag ${{ steps.compute.outputs.dist_tag }} --provenance --access public
+
+            - name: Summary
+              run: |
+                  echo "### UI Common Published" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "**Version:** \`${{ steps.compute.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+                  echo "**Dist-tag:** \`${{ steps.compute.outputs.dist_tag }}\`" >> $GITHUB_STEP_SUMMARY
+                  echo "**Trigger:** \`${{ github.event_name }}\`" >> $GITHUB_STEP_SUMMARY
+                  echo "**Commit:** \`${{ steps.compute.outputs.sha }}\`" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "Install with:" >> $GITHUB_STEP_SUMMARY
+                  echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+                  echo "yarn add @cognizant-ai-lab/ui-common@${{ steps.compute.outputs.dist_tag }}" >> $GITHUB_STEP_SUMMARY
+                  echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,257 @@
+{
+include "config/llm_config.hocon"
+
+  "metadata": {
+    "description": "E-commerce Customer Support Agent Network"
+  },
+  "max_execution_seconds": 120,
+  "tools": [
+    {
+      "name": "Coordinator",
+      "function": {
+        "description": "Coordinate and manage the entire network"
+      },
+      "instructions": "Coordinate and manage the entire network\nCall Agent1 when Provide initial customer support.\nCall Agent2 when Handle product inquiries.\nCall Agent3 when Offer shipping and delivery assistance.\nCall Agent4 when Provide technical support.\nCall Agent5 when Handle returns and exchanges.\nCall Agent6 when Offer after-sales support.\nCall Agent7 when Provide customer service.\nCall Agent8 when Offer customer education.\nCall Agent9 when Handle customer complaints.\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "Agent1",
+        "Agent2",
+        "Agent3",
+        "Agent4",
+        "Agent5",
+        "Agent6",
+        "Agent7",
+        "Agent8",
+        "Agent9",
+        "https://api.you.com/mcp?profile=free",
+        "https://mcp.deepwiki.com/mcp",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    },
+    {
+      "name": "Agent1",
+      "function": {
+        "description": "Provide initial customer support",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Provide initial customer support\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://api.you.com/mcp?profile=free",
+        "https://mcp.deepwiki.com/mcp",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    },
+    {
+      "name": "Agent2",
+      "function": {
+        "description": "Handle product inquiries",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Handle product inquiries\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://api.you.com/mcp?profile=free",
+        "https://mcp.deepwiki.com/mcp",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    },
+    {
+      "name": "Agent3",
+      "function": {
+        "description": "Offer shipping and delivery assistance",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Offer shipping and delivery assistance\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://api.you.com/mcp?profile=free",
+        "https://mcp.deepwiki.com/mcp",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    },
+    {
+      "name": "Agent4",
+      "function": {
+        "description": "Provide technical support",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Provide technical support\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://api.you.com/mcp?profile=free",
+        "https://mcp.deepwiki.com/mcp",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    },
+    {
+      "name": "Agent5",
+      "function": {
+        "description": "Handle returns and exchanges",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Handle returns and exchanges\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://api.you.com/mcp?profile=free",
+        "https://mcp.deepwiki.com/mcp",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    },
+    {
+      "name": "Agent6",
+      "function": {
+        "description": "Offer after-sales support",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Offer after-sales support\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://api.you.com/mcp?profile=free",
+        "https://mcp.deepwiki.com/mcp",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    },
+    {
+      "name": "Agent7",
+      "function": {
+        "description": "Provide customer service",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Provide customer service\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://api.you.com/mcp?profile=free",
+        "https://mcp.deepwiki.com/mcp",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    },
+    {
+      "name": "Agent8",
+      "function": {
+        "description": "Offer customer education",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Offer customer education\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://api.you.com/mcp?profile=free",
+        "https://mcp.deepwiki.com/mcp",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    },
+    {
+      "name": "Agent9",
+      "function": {
+        "description": "Handle customer complaints",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Handle customer complaints\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://api.you.com/mcp?profile=free",
+        "https://mcp.deepwiki.com/mcp",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    }
+  ]
+}

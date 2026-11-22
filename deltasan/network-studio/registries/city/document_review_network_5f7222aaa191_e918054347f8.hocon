@@ -1,0 +1,75 @@
+{
+include "config/llm_config.hocon"
+
+  "metadata": {
+    "description": "Document Review Network"
+  },
+  "max_execution_seconds": 120,
+  "tools": [
+    {
+      "name": "Coordinator",
+      "function": {
+        "description": "Review and edit documents"
+      },
+      "instructions": "Review and edit documents\nCall Editor when Review and edit documents.\nCall CopyEditor when Perform spelling checks.\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "Editor",
+        "CopyEditor",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "http://127.0.0.1:45186/mcp"
+      ]
+    },
+    {
+      "name": "Editor",
+      "function": {
+        "description": "Review and edit documents",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Review and edit documents\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "http://127.0.0.1:45186/mcp"
+      ]
+    },
+    {
+      "name": "CopyEditor",
+      "function": {
+        "description": "Perform spelling checks",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Perform spelling checks\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "web_fetch",
+        "http://127.0.0.1:45186/mcp"
+      ]
+    },
+    {
+      "name": "web_fetch",
+      "toolbox": "web_fetch"
+    }
+  ]
+}

@@ -1,0 +1,257 @@
+{
+include "config/llm_config.hocon"
+
+  "metadata": {
+    "description": "Hospital Management Network"
+  },
+  "max_execution_seconds": 120,
+  "tools": [
+    {
+      "name": "Coordinator",
+      "function": {
+        "description": "Overall hospital management"
+      },
+      "instructions": "Overall hospital management\nCall FinanceOfficer when Manage hospital finances.\nCall MedicalDirector when Oversee medical operations.\nCall PharmacyManager when Manage pharmacy operations.\nCall Receptionist when Handle patient and staff inquiries.\nCall LabTechnician when Perform laboratory tests.\nCall Nurse when Provide patient care.\nCall Doctor when Prescribe and treat patients.\nCall Receptionist_8 when Handle patient and staff inquiries.\nCall LabTechnician_9 when Perform laboratory tests.\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "FinanceOfficer",
+        "MedicalDirector",
+        "PharmacyManager",
+        "Receptionist",
+        "LabTechnician",
+        "Nurse",
+        "Doctor",
+        "Receptionist_8",
+        "LabTechnician_9",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    },
+    {
+      "name": "FinanceOfficer",
+      "function": {
+        "description": "Manage hospital finances",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Manage hospital finances\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    },
+    {
+      "name": "MedicalDirector",
+      "function": {
+        "description": "Oversee medical operations",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Oversee medical operations\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    },
+    {
+      "name": "PharmacyManager",
+      "function": {
+        "description": "Manage pharmacy operations",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Manage pharmacy operations\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    },
+    {
+      "name": "Receptionist",
+      "function": {
+        "description": "Handle patient and staff inquiries",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Handle patient and staff inquiries\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    },
+    {
+      "name": "LabTechnician",
+      "function": {
+        "description": "Perform laboratory tests",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Perform laboratory tests\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    },
+    {
+      "name": "Nurse",
+      "function": {
+        "description": "Provide patient care",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Provide patient care\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    },
+    {
+      "name": "Doctor",
+      "function": {
+        "description": "Prescribe and treat patients",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Prescribe and treat patients\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    },
+    {
+      "name": "Receptionist_8",
+      "function": {
+        "description": "Handle patient and staff inquiries",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Handle patient and staff inquiries\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    },
+    {
+      "name": "LabTechnician_9",
+      "function": {
+        "description": "Perform laboratory tests",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Perform laboratory tests\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "http://127.0.0.1:45186/mcp",
+        "https://agenttools.wolfram.com/mcp"
+      ]
+    }
+  ]
+}

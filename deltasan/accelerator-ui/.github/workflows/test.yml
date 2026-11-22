@@ -1,0 +1,134 @@
+#    Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+#
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
+
+# ================================================================================
+# Test Workflow
+# ================================================================================
+# Purpose: Run comprehensive code quality checks and unit tests
+#
+# Trigger Scenarios:
+# - Called by orchestrator workflow (automatic flow)
+# - Manual trigger: Allows testing any arbitrary version/branch
+# ================================================================================
+
+# Note: this is mostly copy-pasta from the same Action in neuro-ui :thumbsdown:
+# See: https://leaf-ai.atlassian.net/browse/UN-3573
+
+name: Test
+
+on:
+    # Allow manual workflow dispatch
+    workflow_dispatch:
+        inputs:
+            revision:
+                description: "Git ref (tag/branch/SHA) to checkout"
+                required: false
+                type: string
+    # Allow being called by other workflows
+    workflow_call:
+        inputs:
+            revision:
+                required: false
+                type: string
+
+env:
+    # AWS info needed to push the image to ECR
+    AWS_REGION: ${{ vars.AWS_REGION || 'us-west-2' }}
+
+permissions:
+    contents: read
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout repository
+              # v6.0.2
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+              with:
+                  fetch-depth: 0
+                  ref: ${{ inputs.revision || github.ref }}
+
+            - name: Setup Node.js environment
+              id: setup-node
+              # build-common 1.0.9
+              uses: cognizant-ai-lab/build-common/actions/setup-node-env@b14b3de23cb9aca02b2165e57542335e0c8f5304
+              with:
+                  clean-install: "true"
+
+            - name: Install prerequisites for code generation
+              run: |
+                  sudo apt-get update --yes > /dev/null
+                  sudo apt-get install --yes --no-install-recommends --no-install-suggests \
+                    bash shellcheck > /dev/null
+
+            - name: Generate OpenAPI types
+              run: yarn generate
+
+            - name: Run ESLint
+              id: eslint
+              if: success() || failure()
+              run: |
+                  ./build_scripts/run_eslint.sh
+
+            - name: Run ShellCheck
+              id: shellcheck
+              if: success() || failure()
+              run: |
+                  ./build_scripts/run_shellcheck.sh
+
+            - name: Run Prettier (formatting check)
+              id: prettier
+              if: success() || failure()
+              run: |
+                  yarn check-format --version
+                  yarn check-format
+
+            - name: Run knip (unused dependencies/exports check)
+              id: knip
+              if: success() || failure()
+              run: |
+                  yarn knip --version
+                  yarn knip
+
+            - name: Lint Dockerfiles (hadolint)
+              id: hadolint
+              if: success() || failure()
+              # build-common 1.0.9
+              uses: cognizant-ai-lab/build-common/actions/run-hadolint@b14b3de23cb9aca02b2165e57542335e0c8f5304
+              with:
+                  recursive: "true"
+                  failure-threshold: info
+
+            - name: Docker build check
+              id: dockerbuild
+              if: success() || failure()
+              run: |
+                  docker --version
+                  docker build --quiet --check --build-arg NODEJS_VERSION=${{ steps.setup-node.outputs.nodejs-major-version }} --file apps/main/Dockerfile .
+
+            - name: Run TypeScript compilation
+              id: tsc
+              if: success() || failure()
+              run: |
+                  yarn tsc --version
+                  yarn tsc
+
+            - name: Run unit tests
+              id: unit
+              if: success() || failure()
+              run: |
+                  node --version
+                  yarn vitest --version
+                  yarn test --coverage

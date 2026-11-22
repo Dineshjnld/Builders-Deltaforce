@@ -1,0 +1,47 @@
+{
+include "config/llm_config.hocon"
+
+  "metadata": {
+    "description": "MeetingNotesNetwork"
+  },
+  "max_execution_seconds": 120,
+  "tools": [
+    {
+      "name": "Coordinator",
+      "function": {
+        "description": "send notes"
+      },
+      "instructions": "send notes\nCall SummaryWriter when receive notes.\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "SummaryWriter",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "SummaryWriter",
+      "function": {
+        "description": "receive notes",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "receive notes\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "web_fetch",
+      "toolbox": "web_fetch"
+    }
+  ]
+}

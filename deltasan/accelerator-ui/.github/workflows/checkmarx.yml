@@ -1,0 +1,23 @@
+---
+name: Checkmarx One
+
+on:
+    schedule:
+        # M-F at 2:30 am UTC (offset from neuro-san to avoid contention)
+        - cron: "30 2 * * 1-5"
+    workflow_dispatch:
+
+jobs:
+    checkmarx:
+        # build-common 1.0.9
+        uses: cognizant-ai-lab/build-common/.github/workflows/_checkmarx.yml@b14b3de23cb9aca02b2165e57542335e0c8f5304
+        with:
+            base-uri: ${{ vars.CX_BASE_URI }}
+            cx-tenant: ${{ vars.CX_TENANT }}
+            cx-client-id: ${{ vars.CX_CLIENT_ID }}
+        secrets:
+            CX_CLIENT_SECRET: ${{ secrets.CX_CLIENT_SECRET }}
+            SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        permissions:
+            contents: write
+            security-events: write

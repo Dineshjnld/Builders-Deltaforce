@@ -1,0 +1,29 @@
+# Node/NextJS/dotenv things
+.env
+.env.local
+**/.next
+**/next-env.d.ts
+**/node_modules
+**/tsconfig.tsbuildinfo
+
+# Coverage directory used by tools like lcov
+coverage/
+
+# generated files
+**/generated/
+
+# IntelliJ IDE
+.idea/
+
+# VS Code
+*.code-workspace
+.vscode/
+
+# Build stuff
+**/dist/
+package.tgz
+yarn-error.log
+.yarn/install-state.gz
+
+# Claude Code
+.claude/

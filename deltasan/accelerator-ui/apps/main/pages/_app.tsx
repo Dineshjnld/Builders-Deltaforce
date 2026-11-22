@@ -1,0 +1,456 @@
+/*
+Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+import "@fontsource-variable/inter"
+import "@fontsource-variable/newsreader"
+import "../styles/globals.css"
+import OperationsShell from "../components/OperationsShell"
+import "@xyflow/react/dist/style.css"
+
+import type {EnvironmentResponse} from "./api/environment/Types"
+import Container from "@mui/material/Container"
+import CssBaseline from "@mui/material/CssBaseline"
+import {Theme, ThemeProvider} from "@mui/material/styles"
+import startCase from "lodash-es/startCase"
+import {AnimatePresence, motion, MotionConfig} from "motion/react"
+import {AppProps} from "next/app"
+import Head from "next/head"
+import {useRouter} from "next/router"
+import {SessionProvider} from "next-auth/react"
+import {SnackbarProvider} from "notistack"
+import {FC, ReactElement, JSX as ReactJSX, ReactNode, StrictMode, useCallback, useEffect, useState} from "react"
+
+import {Auth} from "../../../packages/ui-common/components/Authentication/Auth"
+import {CommandPalette} from "../../../packages/ui-common/components/CommandPalette/CommandPalette"
+import {NeuroAIBreadcrumbs} from "../../../packages/ui-common/components/Common/Breadcrumbs"
+import {Footer} from "../../../packages/ui-common/components/Common/Footer"
+import {GoogleAnalytics} from "../../../packages/ui-common/components/Common/GoogleAnalytics"
+import {LoadingSpinner} from "../../../packages/ui-common/components/Common/LoadingSpinner"
+import {Navbar, NavbarProps} from "../../../packages/ui-common/components/Common/Navbar"
+import {Snackbar} from "../../../packages/ui-common/components/Common/Snackbar"
+import {ErrorBoundary} from "../../../packages/ui-common/components/ErrorPage/ErrorBoundary"
+import {TRIGGER_APP_TOUR_EVENT_NAME} from "../../../packages/ui-common/components/MultiAgentAccelerator/const"
+import {DEFAULT_USER_IMAGE, DEFAULT_USERNAME, LOGO} from "../../../packages/ui-common/const"
+import {useEnvironmentStore} from "../../../packages/ui-common/state/Environment"
+import {useSettingsStore} from "../../../packages/ui-common/state/Settings"
+import {useUserInfoStore} from "../../../packages/ui-common/state/UserInfo"
+import {getAuthenticationType, smartSignOut, useAuthentication} from "../../../packages/ui-common/utils/Authentication"
+import {getTitleBase} from "../../../packages/ui-common/utils/title"
+import {UserInfoResponse} from "../../../packages/ui-common/utils/types"
+import {createAppTheme} from "../theme"
+import {CustomPageProps} from "../Types/Types"
+
+type BaseComponent = AppProps extends {Component: infer C} ? C : never
+
+type ExtendedAppProps = AppProps & {
+    // Extend Component with custom properties
+    Component: BaseComponent & CustomPageProps
+}
+
+const DEFAULT_APP_NAME = LOGO
+
+// Page that hosts the app tour
+const TOUR_PAGE_PATH = "/multiAgentAccelerator"
+
+// Page entrance: fade up out of a soft blur. Filter and transform are cleared afterwards (transitionEnd) so the page
+// wrapper doesn't become the containing block for position: fixed descendants (chat launcher, dialogs, panels).
+const PAGE_SPRING = {type: "spring", stiffness: 260, damping: 30, mass: 0.9} as const
+
+interface PageTransitionProps {
+    readonly children: ReactNode
+    readonly fill?: boolean
+}
+
+/**
+ * Animates the page content in (and briefly out) on route changes. Keyed by pathname by the caller.
+ * Reduced motion is handled globally by <MotionConfig reducedMotion="user"> (transforms are skipped, fades kept),
+ * rather than branching on useReducedMotion here, which differs between server and client and broke hydration.
+ */
+const PageTransition = ({children, fill = false}: PageTransitionProps): ReactJSX.Element => (
+    <motion.div
+        animate={{opacity: 1, y: 0, filter: "blur(0px)", transitionEnd: {filter: "none"}}}
+        exit={{opacity: 0, y: -6, filter: "blur(4px)", transition: {duration: 0.14, ease: "easeIn"}}}
+        initial={{opacity: 0, filter: "blur(8px)"}}
+        style={fill ? {height: "100%"} : {display: "flex", flex: 1, flexDirection: "column", minHeight: 0, minWidth: 0}}
+        transition={{...PAGE_SPRING, opacity: {duration: 0.35}, filter: {duration: 0.45, ease: "easeOut"}}}
+    >
+        {children}
+    </motion.div>
+)
+
+/**
+ * Utility component to pass user data along to Navbar. This component exists to isolate the main app from
+ * the useAuthentication hook, which should only be called once the enableAuthentication setting is known.
+ * @param props All props for Navbar except userInfo.
+ * @return Navbar with userInfo passed to it.
+ */
+const NavbarWrapper = (props: Omit<NavbarProps, "userInfo">): ReactElement => {
+    const {data} = useAuthentication()
+    const userInfo = data?.user
+
+    return (
+        <Navbar
+            {...props}
+            id="nav-bar"
+            userInfo={userInfo}
+        />
+    )
+}
+
+// Main function.
+export const NeuroSanUI: FC<ExtendedAppProps> = ({Component, pageProps}): ReactJSX.Element => {
+    const {
+        auth0ClientId,
+        auth0Domain,
+        enableAuthentication,
+        backendNeuroSanApiUrl,
+        logoServiceToken,
+        setAuth0ClientId,
+        setAuth0Domain,
+        setEnableAuthentication,
+        setEnablePublishing,
+        setPublishServerUrl,
+        setBackendNeuroSanApiUrl,
+        setLogoServiceToken,
+        setSupportEmailAddress,
+        supportEmailAddress,
+    } = useEnvironmentStore()
+
+    // Access Next.js router
+    const router = useRouter()
+    const {pathname, query} = router
+
+    // Client-side navigation for the command palette
+    const navigate = useCallback(
+        (path: string) => {
+            void router.push(path)
+        },
+        [router]
+    )
+
+    // Help > Take a tour. The tour lives on the Multi-Agent Accelerator page: if we're already there, tell it to
+    // start; otherwise go there and ask it to start the tour once it has loaded.
+    const onStartTour = useCallback(() => {
+        if (router.pathname === TOUR_PAGE_PATH) {
+            window.dispatchEvent(new CustomEvent(TRIGGER_APP_TOUR_EVENT_NAME))
+        } else {
+            void router.push(`${TOUR_PAGE_PATH}?tour=true`)
+        }
+    }, [router])
+
+    // Access user info store
+    const {currentUser, setCurrentUser, setPicture, oidcProvider, setOidcProvider} = useUserInfoStore()
+
+    // Infer authentication type
+    const authenticationType = getAuthenticationType(enableAuthentication, currentUser, oidcProvider)
+
+    const [pageTitle, setPageTitle] = useState<string>(DEFAULT_APP_NAME)
+
+    const includeBreadcrumbs = Component.withBreadcrumbs ?? true
+
+    const primary = useSettingsStore((state) => state.settings.branding.primary)
+    const secondary = useSettingsStore((state) => state.settings.branding.secondary)
+    const background = useSettingsStore((state) => state.settings.branding.background)
+
+    // Start from the default (unbranded) app theme so the first paint already has the new look
+    const [theme, setTheme] = useState<Theme>(() => createAppTheme())
+
+    // For Google Analytics
+    const [enableGoogleAnalytics, setEnableGoogleAnalytics] = useState<boolean>(false)
+    const [gaMeasurementID, setGaMeasurementID] = useState<string>("")
+
+    // Generate the branded theme only on the client to avoid hydration issues.
+    useEffect(() => {
+        setTheme(createAppTheme(primary, secondary, background))
+    }, [primary, secondary, background])
+
+    useEffect(() => {
+        const urlPaths: string[] = pathname?.split("/").filter((path) => path !== "")
+
+        if (urlPaths.length === 0) {
+            // If we are on the splash screen, set the page title to the default
+            setPageTitle(DEFAULT_APP_NAME)
+        } else if (urlPaths.length === 1) {
+            // If there is just one URL path, set the page title. This prevents overriding Project, Experiment and
+            // DMS pages, which directly set the page title to document.title.
+            setPageTitle(`${getTitleBase()} | ${startCase(urlPaths[0])}`)
+        }
+    }, [pathname])
+
+    useEffect(() => {
+        const getEnvironment = async () => {
+            // Fetch environment settings.
+            // Save these in the zustand store so that subsequent pages will not need to fetch them again
+            const res = await fetch("/api/environment", {
+                method: "GET",
+                headers: {
+                    Accept: "application/json",
+                    "Content-Type": "application/json",
+                },
+            })
+
+            // Check result
+            if (!res.ok) {
+                console.error(`Failed to fetch environment variables: ${res.status} ${res.statusText}`)
+                return
+            }
+
+            // Retrieve environment variables from response
+            const data: EnvironmentResponse = await res.json()
+
+            // We should always have these whether authentication is enabled or not
+            setBackendNeuroSanApiUrl(data.backendNeuroSanApiUrl)
+            setSupportEmailAddress(data.supportEmailAddress)
+            setLogoServiceToken(data.logoServiceToken)
+            setEnableAuthentication(data.enableAuthentication)
+            setEnableGoogleAnalytics(data.enableGoogleAnalytics)
+            setGaMeasurementID(data.gaMeasurementID)
+            setEnablePublishing(data.enablePublishing)
+            setPublishServerUrl(data.publishServerUrl)
+
+            if (data.enableAuthentication) {
+                // save Auth0 settings if authentication is enabled.
+                setAuth0ClientId(data.auth0ClientId)
+                setAuth0Domain(data.auth0Domain)
+            } else {
+                setAuth0ClientId("")
+                setAuth0Domain("")
+            }
+        }
+
+        void getEnvironment()
+    }, [
+        setAuth0ClientId,
+        setAuth0Domain,
+        setEnableAuthentication,
+        setBackendNeuroSanApiUrl,
+        setLogoServiceToken,
+        setSupportEmailAddress,
+        setEnablePublishing,
+        setPublishServerUrl,
+    ])
+
+    useEffect(() => {
+        const getUserInfo = async () => {
+            if (!enableAuthentication) {
+                // Authentication is disabled, so we don't need to get user info
+                setCurrentUser(DEFAULT_USERNAME)
+                setPicture(DEFAULT_USER_IMAGE)
+                setOidcProvider("None")
+                return
+            }
+
+            const res = await fetch("/api/userInfo", {
+                method: "GET",
+                headers: {
+                    Accept: "application/json",
+                    "Content-Type": "application/json",
+                },
+            })
+
+            // Check result
+            if (!res.ok) {
+                // This is bad: it means we saw the ALB header, but it's not in the right format so we're stuck
+                console.error(`Failed to fetch user info: ${res.status} ${res.statusText}`)
+                return
+            }
+
+            const response: UserInfoResponse = await res.json()
+
+            // Make sure we got the user info
+            if (response.oidcHeaderFound) {
+                // Save user info from ALB
+                setCurrentUser(response.username)
+                setPicture(response.picture)
+                setOidcProvider(response.oidcProvider)
+            } else {
+                // Indicate that we didn't get the user info from the ALB. Assume we're using NextAuth instead.
+                setOidcProvider("NextAuth")
+                setCurrentUser(null)
+                setPicture(null)
+            }
+        }
+
+        if (enableAuthentication !== undefined) {
+            // We know whether authentication is enabled or not, so we can get the user info
+            void getUserInfo()
+        }
+    }, [enableAuthentication, setCurrentUser, setOidcProvider, setPicture])
+
+    const handleSignOut = async () => {
+        // Clear our state storage variables
+        setCurrentUser(undefined)
+        setPicture(undefined)
+
+        await smartSignOut(currentUser, auth0Domain, auth0ClientId, oidcProvider)
+    }
+
+    let body: ReactJSX.Element | ReactNode
+
+    /**
+     * Gets the outer container of the app.
+     * This is a transition function to allow a smooth migration to ALB authentication. For now, this function
+     * switches between the NextAuth and ALB authentication cases. If we retrieved the ALB authentication headers,
+     * we use that path. Otherwise, we use NextAuth.
+     *
+     * @returns The outer container of the app
+     */
+    const getAppComponent = () => {
+        // Haven't figured out whether we have ALB headers yet
+        if (currentUser === undefined || !backendNeuroSanApiUrl) {
+            return <LoadingSpinner id="loading-header" />
+        }
+
+        if (currentUser != null) {
+            // We got the ALB headers
+            return backendNeuroSanApiUrl ? (
+                <Component
+                    id="body-non-auth-component"
+                    {...pageProps}
+                />
+            ) : (
+                <LoadingSpinner id="loading-header" />
+            )
+        } else {
+            return enableAuthentication && Component.authRequired ? (
+                <Auth>
+                    <Component
+                        id="body-auth-component"
+                        {...pageProps}
+                    />
+                </Auth>
+            ) : (
+                <Component
+                    id="body-non-auth-component"
+                    {...pageProps}
+                />
+            )
+        }
+    }
+
+    const isAuthenticationKnown = enableAuthentication !== undefined
+
+    if (pathname === "/") {
+        // Main page is special: doesn't have usual header and footer, and draws its own aurora hero background.
+        // In the ALB it is usually set to require authentication, but for historical reasons we don't wrap it in an
+        // auth sandwich for the local testing auth.js/next-auth case.
+        body = (
+            <div
+                id="body-div"
+                style={{
+                    height: "100%",
+                    position: "relative",
+                }}
+            >
+                <PageTransition fill={true}>
+                    <Component
+                        id="body-component"
+                        {...pageProps}
+                    />
+                </PageTransition>
+            </div>
+        )
+    } else if (!isAuthenticationKnown) {
+        body = <LoadingSpinner id="loading-header" />
+    } else {
+        const appShell = (
+            <ErrorBoundary id="error_boundary">
+                {(pathname === TOUR_PAGE_PATH || pathname === "/deploy") && <NavbarWrapper
+                    enableAuthentication={enableAuthentication}
+                    authenticationType={authenticationType}
+                    id="nav-bar"
+                    logo={LOGO}
+                    logoServiceToken={logoServiceToken}
+                    onNavigate={navigate}
+                    onStartTour={onStartTour}
+                    pathname={pathname}
+                    query={query}
+                    signOut={handleSignOut}
+                    supportEmailAddress={supportEmailAddress}
+                />}
+                <Container
+                    id="body-container"
+                    maxWidth={false}
+                    sx={{
+                        display: "flex",
+                        flex: 1,
+                        flexDirection: "column",
+                        minHeight: pathname === TOUR_PAGE_PATH ? "90%" : 0,
+                        ...(pathname === TOUR_PAGE_PATH ? {} : {padding: "0 !important"}),
+                    }}
+                >
+                    <AnimatePresence mode="wait">
+                        <PageTransition key={pathname}>
+                            
+                            {getAppComponent()}
+                        </PageTransition>
+                    </AnimatePresence>
+                </Container>
+            </ErrorBoundary>
+        )
+
+        body = enableAuthentication ? <SessionProvider>{appShell}</SessionProvider> : appShell
+    }
+
+    return (
+        <div id="unileaf">
+            <Head>
+                <title id="unileaf-title">{pageTitle}</title>
+                <meta
+                    id="unileaf-description"
+                    name="description"
+                    content="DeltaForce workflow operations"
+                />
+                <link
+                    id="unileaf-link"
+                    rel="icon"
+                    href="/delta.svg"
+                />
+            </Head>
+            {enableGoogleAnalytics && gaMeasurementID && <GoogleAnalytics gaMeasurementID={gaMeasurementID} />}
+            <StrictMode>
+                {/* Honor prefers-reduced-motion for every motion animation in the app */}
+                <MotionConfig reducedMotion="user">
+                    <ThemeProvider
+                        theme={theme}
+                        noSsr={true}
+                        defaultMode="dark"
+                    >
+                        <CssBaseline />
+                        {pathname === TOUR_PAGE_PATH || pathname === "/deploy" ? body : <OperationsShell>{body}</OperationsShell>}
+                        <CommandPalette
+                            logoServiceToken={logoServiceToken}
+                            onNavigate={navigate}
+                            onStartTour={onStartTour}
+                            pathname={pathname}
+                            supportEmailAddress={supportEmailAddress}
+                        />
+                        <SnackbarProvider
+                            Components={{
+                                info: Snackbar,
+                                success: Snackbar,
+                                warning: Snackbar,
+                                error: Snackbar,
+                            }}
+                        />
+                    </ThemeProvider>
+                </MotionConfig>
+            </StrictMode>
+        </div>
+    )
+}
+
+export default NeuroSanUI

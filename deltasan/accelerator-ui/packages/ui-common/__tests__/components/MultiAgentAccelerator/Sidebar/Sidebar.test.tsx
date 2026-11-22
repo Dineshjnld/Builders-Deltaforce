@@ -1,0 +1,899 @@
+/*
+Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+import {act, render, screen, waitFor, within} from "@testing-library/react"
+import {userEvent, UserEvent} from "@testing-library/user-event"
+import httpStatus from "http-status"
+import {ComponentProps} from "react"
+
+import {INVALID_MUI_ICON_NAME} from "../../../../../../__tests__/common/MuiIconsMock"
+import {
+    LEVEL_1_FOLDER,
+    LEVEL_1_FOLDER_DISPLAY,
+    LEVEL_2_FOLDER,
+    LEVEL_2_FOLDER_DISPLAY,
+    LIST_NETWORKS_RESPONSE,
+    TEMPORARY_NETWORK,
+    TEMPORARY_NETWORK_NAME,
+    TEST_AGENT_MATH_GUY,
+    TEST_AGENT_MATH_GUY_DISPLAY,
+    TEST_AGENT_MUSIC_NERD,
+    TEST_AGENT_MUSIC_NERD_DISPLAY,
+    TEST_AGENTS_FOLDER,
+    TEST_AGENTS_FOLDER_DISPLAY,
+    TEST_DEEP_AGENT,
+    TEST_DEEP_AGENT_DISPLAY,
+} from "../../../../../../__tests__/common/NetworksListMock"
+import {withStrictMocks} from "../../../../../../__tests__/common/strictMocks"
+import {AGENT_NETWORK_DESIGNER_ID} from "../../../../components/MultiAgentAccelerator/const"
+import {PUBLISH_SETTINGS_REQUIRED_MESSAGE} from "../../../../components/MultiAgentAccelerator/Publish/Publish"
+import {REFRESH_THEME_LABEL} from "../../../../components/MultiAgentAccelerator/Publish/PublishConfirmation"
+import {
+    DOWNLOAD_NETWORK_DEFINITION_LABEL,
+    EDIT_NETWORK_LABEL,
+} from "../../../../components/MultiAgentAccelerator/Sidebar/AgentNetworkTreeItem"
+import {
+    Sidebar,
+    SidebarProps,
+    SPARKLE_HIGHLIGHT_CLASS,
+} from "../../../../components/MultiAgentAccelerator/Sidebar/Sidebar"
+import {testConnection, TestConnectionResult} from "../../../../controller/agent/Agent"
+import {isPublishNameTaken, listPublishedNetworks, publishNetwork} from "../../../../controller/publish/Publish"
+import {NetworkIconSuggestions} from "../../../../controller/Types/NetworkIconSuggestions"
+import {AgentInfo} from "../../../../generated/neuro-san/NeuroSanClient"
+import {useEnvironmentStore} from "../../../../state/Environment"
+import {PublishStatus, usePublishStore} from "../../../../state/Publish"
+import {useSettingsStore} from "../../../../state/Settings"
+import {cleanUpAgentName} from "../../../../utils/AgentName"
+import {downloadFile} from "../../../../utils/File"
+
+const DEFAULT_EXAMPLE_URL = "https://default.example.com"
+
+// mock MUI TreeView so we can generate normally impossible values
+let mockSelectedTreeItemId: string | null | undefined
+vi.mock("@mui/x-tree-view/RichTreeView", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@mui/x-tree-view/RichTreeView")>()
+
+    return {
+        ...actual,
+        RichTreeView: (props: ComponentProps<typeof actual.RichTreeView>) => {
+            const OriginalRichTreeView = actual.RichTreeView
+
+            return (
+                <>
+                    <OriginalRichTreeView {...props} />
+                    <button
+                        type="button"
+                        data-testid="force-tree-selection"
+                        onClick={() => props.onSelectedItemsChange?.(null, mockSelectedTreeItemId ?? null)}
+                    />
+                </>
+            )
+        },
+    }
+})
+
+// Allow individual tests to turn on "reduced motion"
+let mockReducedMotion = false
+vi.mock("motion/react", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("motion/react")>()
+
+    return {
+        ...actual,
+        useReducedMotion: () => mockReducedMotion,
+    }
+})
+
+vi.mock("../../../../controller/agent/Agent")
+vi.mock("../../../../controller/publish/Publish")
+vi.mock("../../../../components/Common/notification")
+vi.mock("../../../../utils/File", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../../../utils/File")>()
+
+    return {
+        ...actual,
+        downloadFile: vi.fn(),
+    }
+})
+
+// Simulated Neuro-san version for testing
+const TEST_VERSION = "1.2.3.4a"
+
+// Provide a suggested icon for first network
+const NETWORK_ICON_SUGGESTIONS: NetworkIconSuggestions = {
+    [`${TEST_AGENTS_FOLDER}/${TEST_AGENT_MATH_GUY}`]: "Settings",
+}
+
+const onDeleteNetworkMock = vi.fn()
+const setSelectedNetworkMock = vi.fn()
+
+const DEFAULT_PROPS: SidebarProps = {
+    id: "test-flow-id",
+    isAwaitingLlm: false,
+    networkIconSuggestions: NETWORK_ICON_SUGGESTIONS,
+    networks: LIST_NETWORKS_RESPONSE,
+    neuroSanServerURL: DEFAULT_EXAMPLE_URL,
+    newlyAddedTemporaryNetworks: undefined,
+    onDeleteNetwork: onDeleteNetworkMock,
+    onEditNetwork: vi.fn(),
+    setSelectedNetwork: setSelectedNetworkMock,
+}
+
+// Not available in JSDom. See: https://github.com/jsdom/jsdom/issues/1695
+window.HTMLElement.prototype.scrollIntoView = vi.fn()
+
+describe("SideBar", () => {
+    withStrictMocks()
+
+    let user: UserEvent
+
+    /**
+     * This function renders the Sidebar component
+     * @param overrides An object of any prop overrides
+     * @return The props for the Sidebar component
+     */
+    const renderSidebarComponent = (overrides: Partial<SidebarProps> = {}) => {
+        const props: SidebarProps = {...DEFAULT_PROPS, ...overrides}
+        const {rerender} = render(<Sidebar {...props} />)
+
+        return {props, rerender}
+    }
+
+    beforeAll(() => {
+        useEnvironmentStore.getState().setBackendNeuroSanApiUrl(DEFAULT_EXAMPLE_URL)
+    })
+
+    beforeEach(() => {
+        // This has nothing to do with Jest itself and everything to do with a bug in React Testing Library.
+        // See: https://github.com/testing-library/user-event/issues/1115#issuecomment-1565730917
+        // @ts-expect-error -- it's an ugly workaround to be removed when the above issue is fixed in RTL.
+        globalThis["jest"] = {
+            advanceTimersByTime: vi.advanceTimersByTime.bind(vi),
+        }
+
+        mockSelectedTreeItemId = undefined
+        mockReducedMotion = false
+
+        user = userEvent.setup()
+        const testConnectionMock = vi.mocked(testConnection)
+        testConnectionMock.mockResolvedValue({
+            healthCheckResponse: {
+                status: "ok",
+                versions: {"neuro-san": TEST_VERSION},
+            },
+            httpStatus: httpStatus.OK,
+            statusText: "ok",
+            success: true,
+        } satisfies TestConnectionResult)
+
+        // Reset settings store
+        useSettingsStore.getState().resetSettings()
+        useEnvironmentStore.getState().setEnablePublishing(false)
+    })
+
+    it("should render correctly", async () => {
+        const {
+            props: {setSelectedNetwork},
+        } = renderSidebarComponent({})
+
+        // Make sure the heading is present
+        await screen.findByText("Agent Networks")
+
+        // click to expand networks
+        const header = await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY)
+        await user.click(header)
+
+        // Clicking on a network should call the setSelectedNetwork function
+        const network = await screen.findByText(TEST_AGENT_MATH_GUY_DISPLAY)
+        await user.click(network)
+
+        // setSelectedNetwork should be called
+        expect(setSelectedNetwork).toHaveBeenCalledTimes(1)
+        expect(setSelectedNetwork).toHaveBeenCalledWith(`${TEST_AGENTS_FOLDER}/${TEST_AGENT_MATH_GUY}`)
+    })
+
+    it("ignores a connection test result that arrives after the server URL changed", async () => {
+        const testConnectionMock = vi.mocked(testConnection)
+        let resolveStale!: (result: TestConnectionResult) => void
+        testConnectionMock.mockImplementationOnce(
+            () =>
+                new Promise<TestConnectionResult>((resolve) => {
+                    resolveStale = resolve
+                })
+        )
+
+        const {rerender} = renderSidebarComponent({})
+
+        // Change URL: the first (still pending) request is now superseded. Second request succeeds (default mock).
+        rerender(
+            <Sidebar
+                {...DEFAULT_PROPS}
+                neuroSanServerURL="different-url"
+            />
+        )
+        const statusLight = await screen.findByTestId(`${DEFAULT_PROPS.id}-agent-network-status-light`)
+        await waitFor(() => expect(statusLight).toHaveAttribute("data-status", "green"))
+
+        // The stale request now fails, but its result must be ignored
+        await act(async () => {
+            resolveStale({success: false, statusText: "stale", httpStatus: httpStatus.IM_A_TEAPOT})
+            await Promise.resolve()
+        })
+
+        expect(statusLight).toHaveAttribute("data-status", "green")
+    })
+
+    it("selects the Agent Network Designer when the Add New Network button is clicked", async () => {
+        const {props} = renderSidebarComponent({})
+
+        await user.click(await screen.findByRole("button", {name: "Add New Network"}))
+
+        expect(props.setSelectedNetwork).toHaveBeenCalledExactlyOnceWith(AGENT_NETWORK_DESIGNER_ID)
+    })
+
+    it("disables the Add New Network button while awaiting the LLM", async () => {
+        renderSidebarComponent({isAwaitingLlm: true})
+
+        expect(await screen.findByRole("button", {name: "Add New Network"})).toBeDisabled()
+    })
+
+    it("renders the selection indicator without animation when reduced motion is preferred", async () => {
+        mockReducedMotion = true
+        renderSidebarComponent({})
+
+        await user.click(await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY))
+        await user.click(await screen.findByText(TEST_AGENT_MATH_GUY_DISPLAY))
+
+        expect(document.querySelector(".agent-network-selection-indicator")).toBeInTheDocument()
+    })
+
+    it("should show correct Neuro SAN status", async () => {
+        const {rerender} = renderSidebarComponent({})
+
+        const statusLight = await screen.findByTestId(`${DEFAULT_PROPS.id}-agent-network-status-light`)
+
+        // We mocked testConnection to return success, so the status light should be green
+        await waitFor(() => expect(statusLight).toHaveAttribute("data-status", "green"))
+
+        // Check Tooltip
+        await user.hover(statusLight)
+        const statusTooltip = await screen.findByRole("tooltip", {name: "Neuro-san server status"})
+        within(statusTooltip).getByText(TEST_VERSION)
+        within(statusTooltip).getByText("online")
+        within(statusTooltip).getByText(DEFAULT_EXAMPLE_URL)
+
+        // Now mock testConnection to return failure and re-render the component
+        const statusMessage = "expected error string"
+
+        const testConnectionMock = vi.mocked(testConnection)
+        testConnectionMock.mockResolvedValue({
+            success: false,
+            statusText: statusMessage,
+            httpStatus: httpStatus.IM_A_TEAPOT,
+        } satisfies TestConnectionResult)
+
+        rerender(
+            <Sidebar
+                {...DEFAULT_PROPS}
+                neuroSanServerURL=""
+            />
+        )
+
+        // The status light should now be red
+        const errorStatusLight = await screen.findByTestId(`${DEFAULT_PROPS.id}-agent-network-status-light`)
+        await user.hover(errorStatusLight)
+        await waitFor(() => expect(errorStatusLight).toHaveAttribute("data-status", "red"))
+
+        // Tooltip should now show the error status
+        const updatedStatusTooltip = await screen.findByRole("tooltip", {name: "Neuro-san server status"})
+        within(updatedStatusTooltip).getByText(statusMessage)
+        // versions x 2, URL and "service" should be "unknown"
+        expect(within(updatedStatusTooltip).getAllByText("unknown")).toHaveLength(4)
+        within(updatedStatusTooltip).getByText(new RegExp(String(httpStatus.IM_A_TEAPOT), "u"))
+
+        testConnectionMock.mockClear()
+
+        // Now with an unknown http status (mainly for branch coverage)
+        testConnectionMock.mockResolvedValue({
+            success: false,
+            statusText: statusMessage,
+            httpStatus: httpStatus.IM_A_TEAPOT + 1,
+        } satisfies TestConnectionResult)
+
+        rerender(
+            <Sidebar
+                {...DEFAULT_PROPS}
+                neuroSanServerURL="different-url"
+            />
+        )
+
+        const unknownErrorStatusLight = await screen.findByTestId(`${DEFAULT_PROPS.id}-agent-network-status-light`)
+        await user.hover(unknownErrorStatusLight)
+        await waitFor(() => expect(unknownErrorStatusLight).toHaveAttribute("data-status", "red"))
+
+        // Status light should still be red, but the tooltip should show the unknown status code
+        await waitFor(() =>
+            expect(screen.getByTestId(`${DEFAULT_PROPS.id}-agent-network-status-light`)).toHaveAttribute(
+                "data-status",
+                "red"
+            )
+        )
+        const unknownStatusTooltip = await screen.findByRole("tooltip", {name: "Neuro-san server status"})
+        within(unknownStatusTooltip).getByText(statusMessage)
+
+        // 2 versions "unknown" + 1 "service" "unknown" = 3 unknowns
+        expect(within(unknownStatusTooltip).getAllByText("unknown")).toHaveLength(3)
+        within(unknownStatusTooltip).getByText(new RegExp(`${String(httpStatus.IM_A_TEAPOT + 1)}.*Unknown status`, "u"))
+    })
+
+    it("Should display suggested network icons correctly", async () => {
+        renderSidebarComponent()
+
+        // click to expand networks
+        const header = screen.getByText(TEST_AGENTS_FOLDER_DISPLAY)
+        await user.click(header)
+
+        const networkElement = screen.getByText(TEST_AGENT_MATH_GUY_DISPLAY)
+
+        // Find the icon within the same parent container as the network text
+        const networkContainer = networkElement.closest('[role="treeitem"]')
+        within(networkContainer as HTMLElement).getByTestId("SettingsIcon")
+    })
+
+    it("should respect the 'use native names' setting", async () => {
+        useSettingsStore.getState().updateSettings({
+            appearance: {
+                useNativeNames: false,
+            },
+        })
+
+        renderSidebarComponent()
+
+        // click to expand networks
+        const header = screen.getByText(TEST_AGENTS_FOLDER_DISPLAY)
+        await user.click(header)
+
+        // The display name should be the cleaned-up version of the agent name, not the raw agent name
+        screen.getByText(TEST_AGENT_MATH_GUY_DISPLAY)
+        expect(screen.queryByText(TEST_AGENT_MATH_GUY)).not.toBeInTheDocument()
+
+        // Now change to useNativeNames = true and check that the raw agent name is displayed
+        act(() =>
+            useSettingsStore.getState().updateSettings({
+                appearance: {
+                    useNativeNames: true,
+                },
+            })
+        )
+
+        // now the raw agent name should be displayed
+        screen.getByText(TEST_AGENT_MATH_GUY)
+        screen.getByText(TEST_AGENTS_FOLDER)
+
+        // Beautified names should no longer be displayed
+        expect(screen.queryByText(TEST_AGENTS_FOLDER_DISPLAY)).not.toBeInTheDocument()
+        expect(screen.queryByText(TEST_AGENT_MATH_GUY_DISPLAY)).not.toBeInTheDocument()
+    })
+
+    it("Should handle invalid icon suggestions correctly", async () => {
+        renderSidebarComponent({
+            // Override networkIconSuggestions to include an invalid icon name for TEST_AGENT_MUSIC_NERD
+            networkIconSuggestions: {
+                ...NETWORK_ICON_SUGGESTIONS,
+                [`${TEST_AGENTS_FOLDER}/${TEST_AGENT_MUSIC_NERD}`]: INVALID_MUI_ICON_NAME,
+            },
+        })
+
+        // click to expand networks
+        const header = screen.getByText(TEST_AGENTS_FOLDER_DISPLAY)
+        await user.click(header)
+
+        // Check for fallback to default icon
+        const treeItem = screen.getByText(TEST_AGENT_MUSIC_NERD_DISPLAY).closest('[role="treeitem"]')
+        within(treeItem as HTMLElement).getByTestId("HubIcon")
+    })
+
+    it("Should render the tags when user mouses over the icon", async () => {
+        renderSidebarComponent()
+
+        // click to expand networks
+        const header = await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY)
+        await user.click(header)
+
+        // Find the first tag item and hover over it
+        const network = await screen.findByTestId("BookmarkIcon")
+        await user.hover(network)
+
+        // Check that all tags are displayed in the tooltip
+        for (const tag of LIST_NETWORKS_RESPONSE[0].tags) {
+            await screen.findByText(tag)
+        }
+    })
+
+    it("Should render a child network without tags and omit the bookmark icon", async () => {
+        renderSidebarComponent({
+            networks: [
+                {
+                    agent_name: `${TEST_AGENTS_FOLDER}/${TEST_AGENT_MATH_GUY}`,
+                    description: "",
+                    // Intentionally omit `tags` to exercise the `agentNode?.tags || []` fallback
+                },
+            ] satisfies AgentInfo[],
+        })
+
+        // Expand the folder
+        const header = await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY)
+        await user.click(header)
+
+        // The network renders, but with no tags there should be no bookmark icon
+        const networkElement = await screen.findByText(TEST_AGENT_MATH_GUY_DISPLAY)
+        const networkContainer = networkElement.closest('[role="treeitem"]')
+        expect(within(networkContainer as HTMLElement).queryByTestId("BookmarkIcon")).not.toBeInTheDocument()
+    })
+
+    it("keeps the temporary folder expanded when another temporary network is added", async () => {
+        const {rerender} = renderSidebarComponent({
+            newlyAddedTemporaryNetworks: new Set([TEMPORARY_NETWORK.agentInfo.agent_name]),
+            temporaryNetworks: [TEMPORARY_NETWORK],
+        })
+        await screen.findByText("Agent Networks")
+
+        // A new Set instance re-runs the effect while the folder is already in the expanded list
+        rerender(
+            <Sidebar
+                {...DEFAULT_PROPS}
+                newlyAddedTemporaryNetworks={new Set([TEMPORARY_NETWORK.agentInfo.agent_name])}
+                temporaryNetworks={[TEMPORARY_NETWORK]}
+            />
+        )
+
+        expect(await screen.findByText(cleanUpAgentName(TEMPORARY_NETWORK_NAME))).toBeInTheDocument()
+    })
+
+    it("Should render uncategorized networks correctly", async () => {
+        renderSidebarComponent()
+
+        // Ensure uncategorized networks are displayed
+        const uncategorizedHeader = await screen.findByText("Uncategorized")
+
+        // Expand Uncategorized section
+        await user.click(uncategorizedHeader)
+
+        // Check for uncategorized networks; they are those without a "/" in their agent_name
+        const uncategorizedNetworks = LIST_NETWORKS_RESPONSE.filter((n) => !n.agent_name.includes("/"))
+        for (const network of uncategorizedNetworks) {
+            await screen.findByText(cleanUpAgentName(network.agent_name))
+        }
+    })
+
+    it("Should handle networks of arbitrary depth", async () => {
+        renderSidebarComponent()
+
+        // click to expand networks
+        const header = await screen.findByText(TEST_AGENTS_FOLDER_DISPLAY)
+        await user.click(header)
+
+        // Ensure deep network is present
+        const level1Header = await screen.findByText(LEVEL_1_FOLDER_DISPLAY)
+
+        // Expand level 1
+        await user.click(level1Header)
+
+        const level2Header = await screen.findByText(LEVEL_2_FOLDER_DISPLAY)
+
+        // Expand level 2
+        await user.click(level2Header)
+
+        // Check for deep agent
+        const deepAgent = await screen.findByText(TEST_DEEP_AGENT_DISPLAY)
+
+        // Deep agent tags
+        // Find the BookmarkIcon within the same parent container as the deep agent text
+        const deepAgentContainer = deepAgent.closest('[role="treeitem"]')
+        const bookmarkIcon = within(deepAgentContainer as HTMLElement).getByTestId("BookmarkIcon")
+
+        // Hover over the bookmark icon
+        await user.hover(bookmarkIcon)
+
+        // Verify the deep agent tags from LIST_NETWORKS_RESPONSE are displayed
+        const deepAgentData = LIST_NETWORKS_RESPONSE.find(
+            (n) => n.agent_name === `${TEST_AGENTS_FOLDER}/${LEVEL_1_FOLDER}/${LEVEL_2_FOLDER}/${TEST_DEEP_AGENT}`
+        )
+        for (const tag of deepAgentData.tags) {
+            await screen.findByText(tag)
+        }
+    })
+
+    it("Should handle temporary networks correctly", async () => {
+        renderSidebarComponent({
+            networks: [...LIST_NETWORKS_RESPONSE],
+            temporaryNetworks: [TEMPORARY_NETWORK],
+            newlyAddedTemporaryNetworks: new Set([TEMPORARY_NETWORK.agentInfo.agent_name]),
+        })
+
+        // Item should be auto-expanded as it's a newly added temporary network
+        await screen.findByText(cleanUpAgentName(TEMPORARY_NETWORK_NAME))
+
+        // Should be an icon to download the network
+        const downloadButton = screen.getByRole("button", {name: DOWNLOAD_NETWORK_DEFINITION_LABEL})
+        await user.click(downloadButton)
+
+        expect(downloadFile).toHaveBeenCalledWith(
+            TEMPORARY_NETWORK.networkHocon,
+            `${TEMPORARY_NETWORK_NAME}.hocon`,
+            "text/plain"
+        )
+    })
+
+    it("Should handle expired temporary networks correctly", async () => {
+        renderSidebarComponent({
+            networks: [...LIST_NETWORKS_RESPONSE],
+            temporaryNetworks: [
+                {
+                    ...TEMPORARY_NETWORK,
+                    reservation: {
+                        ...TEMPORARY_NETWORK.reservation,
+                        // Set expiration time in the past to simulate expired network
+                        expiration_time_in_seconds: Math.floor(Date.now() / 1000) - 3600,
+                    },
+                },
+            ],
+            newlyAddedTemporaryNetworks: new Set([TEMPORARY_NETWORK.agentInfo.agent_name]),
+        })
+
+        // Should be displayed even if expired
+        const tempNetworkName = await screen.findByText(cleanUpAgentName(TEMPORARY_NETWORK_NAME))
+        await user.hover(tempNetworkName)
+
+        // Tooltip should indicate that the network is expired
+        await screen.findByText(/Expired/u)
+
+        // The download and edit action buttons should be disabled while the network is expired
+        const treeItem = tempNetworkName.closest('[role="treeitem"]')
+        expect(
+            within(treeItem as HTMLElement).getByRole("button", {name: DOWNLOAD_NETWORK_DEFINITION_LABEL})
+        ).toBeDisabled()
+        expect(within(treeItem as HTMLElement).getByRole("button", {name: EDIT_NETWORK_LABEL})).toBeDisabled()
+
+        setSelectedNetworkMock.mockClear()
+
+        // Clicking the expired network should have no effect
+        await user.click(tempNetworkName)
+
+        expect(setSelectedNetworkMock).not.toHaveBeenCalled()
+    })
+
+    it("Should allow deleting temporary networks", async () => {
+        renderSidebarComponent({
+            networks: [...LIST_NETWORKS_RESPONSE],
+            temporaryNetworks: [TEMPORARY_NETWORK],
+            newlyAddedTemporaryNetworks: new Set([TEMPORARY_NETWORK.agentInfo.agent_name]),
+        })
+
+        const networkTreeItem = await screen.findByText(cleanUpAgentName(TEMPORARY_NETWORK_NAME))
+
+        // Find the delete icon within the same tree item
+        const treeItem = networkTreeItem.closest('[role="treeitem"]')
+        const deleteIcon = within(treeItem as HTMLElement).getByTestId("DeleteIcon")
+        await user.click(deleteIcon)
+
+        // onDeleteNetwork should be called with the correct network name
+        expect(onDeleteNetworkMock).toHaveBeenCalledWith(TEMPORARY_NETWORK.agentInfo.agent_name, false)
+    })
+
+    it("Should select the network and call onEditNetwork when edit is clicked on a non-selected network", async () => {
+        const onEditNetworkMock = vi.fn()
+        renderSidebarComponent({
+            networks: [...LIST_NETWORKS_RESPONSE],
+            temporaryNetworks: [TEMPORARY_NETWORK],
+            newlyAddedTemporaryNetworks: new Set([TEMPORARY_NETWORK.agentInfo.agent_name]),
+            onEditNetwork: onEditNetworkMock,
+        })
+
+        await screen.findByText(cleanUpAgentName(TEMPORARY_NETWORK_NAME))
+
+        setSelectedNetworkMock.mockClear()
+
+        // Click the edit icon – the network is NOT currently selected
+        const networkTreeItem = screen.getByText(cleanUpAgentName(TEMPORARY_NETWORK_NAME))
+        const treeItem = networkTreeItem.closest('[role="treeitem"]')
+        const editButton = within(treeItem as HTMLElement).getByRole("button", {name: EDIT_NETWORK_LABEL})
+        await user.click(editButton)
+
+        // Should have selected the network because it was not already selected
+        expect(setSelectedNetworkMock).toHaveBeenCalledWith(TEMPORARY_NETWORK.agentInfo.agent_name)
+        // Should also have called onEditNetwork
+        expect(onEditNetworkMock).toHaveBeenCalledWith(TEMPORARY_NETWORK.agentInfo.agent_name)
+    })
+
+    it("Should not re-select the network when edit is clicked on the already-selected network", async () => {
+        const onEditNetworkMock = vi.fn()
+        renderSidebarComponent({
+            networks: [...LIST_NETWORKS_RESPONSE],
+            temporaryNetworks: [TEMPORARY_NETWORK],
+            newlyAddedTemporaryNetworks: new Set([TEMPORARY_NETWORK.agentInfo.agent_name]),
+            onEditNetwork: onEditNetworkMock,
+        })
+
+        // First, select the network by clicking its label
+        const networkLabel = await screen.findByText(cleanUpAgentName(TEMPORARY_NETWORK_NAME))
+        await user.click(networkLabel)
+
+        setSelectedNetworkMock.mockClear()
+
+        // Now click the edit icon – the network IS already selected
+        const networkTreeItem = screen.getByText(cleanUpAgentName(TEMPORARY_NETWORK_NAME))
+        const treeItem = networkTreeItem.closest('[role="treeitem"]')
+        const editButton = within(treeItem as HTMLElement).getByRole("button", {name: EDIT_NETWORK_LABEL})
+        await user.click(editButton)
+
+        // Should NOT have called setSelectedNetwork again (network was already selected)
+        expect(setSelectedNetworkMock).not.toHaveBeenCalled()
+        // Should still have called onEditNetwork
+        expect(onEditNetworkMock).toHaveBeenCalledWith(TEMPORARY_NETWORK.agentInfo.agent_name)
+    })
+
+    it("Should handle invalid items in select handler", async () => {
+        renderSidebarComponent()
+
+        mockSelectedTreeItemId = null
+        await user.click(screen.getByTestId("force-tree-selection"))
+
+        mockSelectedTreeItemId = "not-a-real-tree-item"
+        await user.click(screen.getByTestId("force-tree-selection"))
+
+        expect(setSelectedNetworkMock).not.toHaveBeenCalled()
+    })
+
+    it("should not break if networks is empty", async () => {
+        renderSidebarComponent({networks: []})
+        await screen.findByText("Agent Networks")
+        expect(screen.queryByRole("button", {name: TEST_AGENT_MATH_GUY})).not.toBeInTheDocument()
+    })
+
+    it("Should add sparkle-highlight to the selected tree item after the 50ms timeout", async () => {
+        // Fake timers make the 50ms highlight callback fire deterministically.
+        vi.useFakeTimers()
+
+        renderSidebarComponent({
+            networks: [...LIST_NETWORKS_RESPONSE],
+            temporaryNetworks: [TEMPORARY_NETWORK],
+            newlyAddedTemporaryNetworks: new Set([TEMPORARY_NETWORK.agentInfo.agent_name]),
+        })
+
+        // Flush pending state updates; findByText succeeds on the first poll (element
+        // already present), so no fake-timer conflict.
+        const treeItem = screen.getByText(cleanUpAgentName(TEMPORARY_NETWORK_NAME)).closest('[role="treeitem"]')
+
+        // Class only gets applied after 50 ms elapsed, which they haven't yet (in our simulated timeline)
+        expect(treeItem).not.toHaveClass(SPARKLE_HIGHLIGHT_CLASS)
+
+        // Fire the pending 50ms timer — covers the true arm of `if (selectedNode)`.
+        // 5000ms sparkle-remove timer registered inside the callback won't fire here.
+        act(() => {
+            vi.advanceTimersByTime(50)
+        })
+
+        // Now the sparkle class should have been applied
+        await waitFor(() => expect(treeItem).toHaveClass(SPARKLE_HIGHLIGHT_CLASS))
+
+        act(() => {
+            vi.advanceTimersByTime(5001)
+        })
+
+        // Make sure the sparkle highlight class is removed after the next timer runs
+        await waitFor(() => expect(treeItem).not.toHaveClass(SPARKLE_HIGHLIGHT_CLASS))
+    })
+
+    it("Should be a no-op when the highlight callback finds no matching tree item", async () => {
+        // Fake timers make the 50ms callback fire deterministically.
+        vi.useFakeTimers()
+
+        // Render with empty networks, so there are NO treeitem elements in the DOM.
+        // When the 50ms timer fires, querySelector returns null → covers the false
+        // arm of `if (selectedNode)` in the highlight callback.
+        renderSidebarComponent({
+            networks: [],
+            temporaryNetworks: [],
+            newlyAddedTemporaryNetworks: new Set(["any-name"]),
+        })
+
+        screen.getByText("Agent Networks")
+
+        // Fire the 50ms timer — selectedNode is null, so the callback is a no-op.
+        act(() => {
+            vi.advanceTimersByTime(50)
+        })
+
+        await waitFor(() => expect(screen.queryByRole("treeitem")).not.toBeInTheDocument())
+    })
+
+    describe("Publishing from the sidebar", () => {
+        const PUBLISHED_URL = "http://live.test/temporary_network"
+        const SERVER_URL = "https://publish.test"
+
+        const renderWithTemporaryNetwork = (temporaryNetwork = TEMPORARY_NETWORK) =>
+            renderSidebarComponent({
+                networks: [...LIST_NETWORKS_RESPONSE],
+                temporaryNetworks: [temporaryNetwork],
+                newlyAddedTemporaryNetworks: new Set([TEMPORARY_NETWORK.agentInfo.agent_name]),
+            })
+
+        const EXPIRED_TEMPORARY_NETWORK = {
+            ...TEMPORARY_NETWORK,
+            reservation: {
+                ...TEMPORARY_NETWORK.reservation,
+                expiration_time_in_seconds: Math.floor(Date.now() / 1000) - 3600,
+            },
+        }
+
+        const markUnpublished = () =>
+            usePublishStore.setState({
+                networks: {[TEMPORARY_NETWORK.agentInfo.agent_name]: {status: PublishStatus.Unpublished}},
+            })
+
+        const markLive = () =>
+            usePublishStore.setState({
+                networks: {
+                    [TEMPORARY_NETWORK.agentInfo.agent_name]: {
+                        publishId: "dep-123",
+                        serverUrl: SERVER_URL,
+                        status: PublishStatus.Published,
+                        url: PUBLISHED_URL,
+                    },
+                },
+            })
+
+        beforeEach(() => {
+            useEnvironmentStore.getState().setEnablePublishing(true)
+            useSettingsStore.getState().updateSettings({publish: {serverUrl: SERVER_URL, orgName: "cailville"}})
+            usePublishStore.setState(usePublishStore.getInitialState())
+            vi.mocked(listPublishedNetworks).mockResolvedValue([])
+            vi.mocked(isPublishNameTaken).mockResolvedValue(false)
+            vi.mocked(publishNetwork).mockResolvedValue({id: "dep-123", url: PUBLISHED_URL})
+            vi.spyOn(window, "open").mockReturnValue({opener: window} as Window)
+        })
+
+        it("Should publish a temporary network after asking, without opening the network", async () => {
+            renderWithTemporaryNetwork()
+            const publishButton = await screen.findByRole("button", {name: "Publish"})
+
+            await user.click(publishButton)
+            const confirmation = await screen.findByRole("dialog")
+            const confirmButton = within(confirmation).getByRole("button", {name: "Publish"})
+            await user.click(confirmButton)
+
+            await screen.findByRole("button", {name: "View live"})
+            expect(publishNetwork).toHaveBeenCalledWith(
+                expect.objectContaining({networkName: TEMPORARY_NETWORK.agentNetworkName})
+            )
+            expect(setSelectedNetworkMock).not.toHaveBeenCalled()
+        })
+
+        it("Should cancel publishing with Escape, without publishing or opening the network", async () => {
+            renderWithTemporaryNetwork()
+            const publishButton = await screen.findByRole("button", {name: "Publish"})
+            await user.click(publishButton)
+            await screen.findByRole("dialog")
+
+            await user.keyboard("{Escape}")
+
+            await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument())
+            screen.getByRole("button", {name: "Publish"})
+            expect(publishNetwork).not.toHaveBeenCalled()
+            expect(setSelectedNetworkMock).not.toHaveBeenCalled()
+        })
+
+        it("Should show a temporary network is still publishing, without offering to publish it again", async () => {
+            usePublishStore.setState({
+                networks: {[TEMPORARY_NETWORK.agentInfo.agent_name]: {status: PublishStatus.Publishing}},
+            })
+            renderWithTemporaryNetwork()
+
+            const publishingButton = await screen.findByRole("button", {name: "Publishing..."})
+
+            expect(publishingButton).toBeDisabled()
+        })
+
+        it("Should ask for an org name before publishing", async () => {
+            useSettingsStore.getState().updateSettings({publish: {serverUrl: SERVER_URL, orgName: null}})
+            renderWithTemporaryNetwork()
+
+            const publishButton = await screen.findByRole("button", {name: PUBLISH_SETTINGS_REQUIRED_MESSAGE})
+
+            expect(publishButton).toBeDisabled()
+        })
+
+        it("Should not offer to publish an expired temporary network", async () => {
+            renderWithTemporaryNetwork(EXPIRED_TEMPORARY_NETWORK)
+
+            const expiredButton = await screen.findByRole("button", {name: "Expired"})
+
+            expect(expiredButton).toBeDisabled()
+        })
+
+        it("Should still open the live site of an expired temporary network", async () => {
+            markLive()
+            renderWithTemporaryNetwork(EXPIRED_TEMPORARY_NETWORK)
+            const viewLiveButton = await screen.findByRole("button", {name: "View live"})
+
+            await user.click(viewLiveButton)
+
+            expect(window.open).toHaveBeenCalledWith(PUBLISHED_URL, "_blank")
+        })
+
+        it("Should open the live site once the temporary network is live, without opening the network", async () => {
+            markLive()
+            renderWithTemporaryNetwork()
+            const viewLiveButton = await screen.findByRole("button", {name: "View live"})
+
+            await user.click(viewLiveButton)
+
+            expect(window.open).toHaveBeenCalledWith(PUBLISHED_URL, "_blank")
+            expect(setSelectedNetworkMock).not.toHaveBeenCalled()
+        })
+
+        it("Should ask before publishing an unpublished temporary network again, without opening it", async () => {
+            markUnpublished()
+            renderWithTemporaryNetwork()
+            const publishButton = await screen.findByRole("button", {name: "Publish"})
+
+            await user.click(publishButton)
+            const confirmation = await screen.findByRole("dialog")
+            const confirmButton = within(confirmation).getByRole("button", {name: "Publish"})
+            await user.click(confirmButton)
+
+            await waitFor(() =>
+                expect(publishNetwork).toHaveBeenCalledWith(expect.objectContaining({refreshTheme: false}))
+            )
+            expect(setSelectedNetworkMock).not.toHaveBeenCalled()
+        })
+
+        it("Should offer to recreate the theme when publishing an unpublished temporary network again", async () => {
+            markUnpublished()
+            renderWithTemporaryNetwork()
+            const publishButton = await screen.findByRole("button", {name: "Publish"})
+
+            await user.click(publishButton)
+
+            const confirmation = await screen.findByRole("dialog")
+            within(confirmation).getByRole("checkbox", {name: REFRESH_THEME_LABEL})
+        })
+
+        it("Should cancel publishing again with Escape, without publishing or opening the network", async () => {
+            markUnpublished()
+            renderWithTemporaryNetwork()
+            const publishButton = await screen.findByRole("button", {name: "Publish"})
+            await user.click(publishButton)
+            await screen.findByRole("dialog")
+
+            await user.keyboard("{Escape}")
+
+            await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument())
+            expect(publishNetwork).not.toHaveBeenCalled()
+            expect(setSelectedNetworkMock).not.toHaveBeenCalled()
+        })
+
+        it("Should not offer to publish until a publishing server is set", async () => {
+            useSettingsStore.getState().updateSettings({publish: {serverUrl: null, orgName: null}})
+            renderWithTemporaryNetwork()
+
+            // First proves the temporary network, where the button would appear, is on screen
+            await screen.findByText(cleanUpAgentName(TEMPORARY_NETWORK_NAME))
+            expect(screen.queryByRole("button", {name: "Publish"})).not.toBeInTheDocument()
+        })
+    })
+})

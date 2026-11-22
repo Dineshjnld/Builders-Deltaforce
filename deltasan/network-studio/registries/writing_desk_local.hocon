@@ -1,0 +1,25 @@
+{
+    include "config/llm_config.hocon"
+    "metadata": {"description":"A writing desk with a coordinator and copy editor."}
+    "tools": [
+        {
+            "name":"WritingDesk",
+            "function":{"description":"Draft and revise short pieces of writing."},
+            "instructions":"Ask CopyEditor to review the requested text. Return the edited text.",
+            "tools":["CopyEditor"]
+        },
+        {
+            "name":"CopyEditor",
+            "function":{
+                "description":"Edit a passage for clarity.",
+                "parameters":{
+                    "type":"object",
+                    "properties":{"text":{"type":"string","description":"Passage to edit"}},
+                    "required":["text"]
+                }
+            },
+            "instructions":"Correct grammar and simplify the supplied passage without changing its meaning.",
+            "tools":[]
+        }
+    ]
+}

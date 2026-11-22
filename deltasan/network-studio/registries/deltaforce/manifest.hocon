@@ -1,0 +1,16 @@
+{
+  "deltaforce/facility_inspection_summary_9aa25ad70216.hocon": true,
+  "deltaforce/facilitiesinspection_8d3af4416298.hocon": true,
+  "deltaforce/facilities_inspection_summary_9813ec88a88b.hocon": true,
+  "deltaforce/facilities_inspection_summary_d2d7fa53de3f.hocon": true,
+  "deltaforce/shift_desk_routing_d1cdab06e0a4.hocon": true,
+  "deltaforce/shift_handover_network_07cb3a3171d7.hocon": true,
+  "deltaforce/agent_network_for_vboice_ai_staryup_503461e34860.hocon": true,
+  "deltaforce/meetingnotesnetwork_fad3cda22a9b.hocon": true,
+  "deltaforce/document_review_network_5f7222aaa191.hocon": true,
+  "deltaforce/writing_desk_design_aadd041367a4.hocon": true,
+  "deltaforce/writing_desk_9cac11e8f7cb.hocon": true,
+  "deltaforce/hospital_management_network_d780b85dcd56.hocon": true,
+  "deltaforce/e_commerce_customer_support_agent_network_0d663728342b.hocon": true,
+  "deltaforce/employee_onboarding_network_33c393809412.hocon": true
+}

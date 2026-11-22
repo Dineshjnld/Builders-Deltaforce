@@ -1,0 +1,235 @@
+{
+include "config/llm_config.hocon"
+
+  "metadata": {
+    "description": "Employee Onboarding Network"
+  },
+  "max_execution_seconds": 120,
+  "tools": [
+    {
+      "name": "Coordinator",
+      "function": {
+        "description": "Initiate the onboarding process"
+      },
+      "instructions": "Initiate the onboarding process\nCall HRManager when Coordinate with the employee's department.\nCall DepartmentManager when Provide department-specific information.\nCall ITSupport when Provide technical support during the onboarding process.\nCall Finance when Provide financial information and resources.\nCall Legal when Provide legal advice and resources.\nCall TrainingCoordinator when Coordinate with the training department.\nCall Recruitment when Provide information about the company's culture and values.\nCall OnboardingCoordinator when Coordinate with the other agents.\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "HRManager",
+        "DepartmentManager",
+        "ITSupport",
+        "Finance",
+        "Legal",
+        "TrainingCoordinator",
+        "Recruitment",
+        "OnboardingCoordinator",
+        "http://127.0.0.1:45186/mcp",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "HRManager",
+      "function": {
+        "description": "Coordinate with the employee's department",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Coordinate with the employee's department\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "http://127.0.0.1:45186/mcp",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "DepartmentManager",
+      "function": {
+        "description": "Provide department-specific information",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Provide department-specific information\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "http://127.0.0.1:45186/mcp",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "ITSupport",
+      "function": {
+        "description": "Provide technical support during the onboarding process",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Provide technical support during the onboarding process\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "http://127.0.0.1:45186/mcp",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "Finance",
+      "function": {
+        "description": "Provide financial information and resources",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Provide financial information and resources\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "http://127.0.0.1:45186/mcp",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "Legal",
+      "function": {
+        "description": "Provide legal advice and resources",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Provide legal advice and resources\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "http://127.0.0.1:45186/mcp",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "TrainingCoordinator",
+      "function": {
+        "description": "Coordinate with the training department",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Coordinate with the training department\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "http://127.0.0.1:45186/mcp",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "Recruitment",
+      "function": {
+        "description": "Provide information about the company's culture and values",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Provide information about the company's culture and values\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "http://127.0.0.1:45186/mcp",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "OnboardingCoordinator",
+      "function": {
+        "description": "Coordinate with the other agents",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "assignment": {
+              "type": "string",
+              "description": "Task and supporting context"
+            }
+          },
+          "required": [
+            "assignment"
+          ]
+        }
+      },
+      "instructions": "Coordinate with the other agents\nUse the assigned tools when the request needs their information.",
+      "tools": [
+        "http://127.0.0.1:45186/mcp",
+        "https://mcp.deepwiki.com/mcp",
+        "https://api.you.com/mcp?profile=free",
+        "web_fetch"
+      ]
+    },
+    {
+      "name": "web_fetch",
+      "toolbox": "web_fetch"
+    }
+  ]
+}

@@ -1,0 +1,419 @@
+/*
+Copyright 2025 Cognizant Technology Solutions Corp, www.cognizant.com.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+/**
+ * Graph layout algorithms and associated functions for the agent network.
+ */
+import dagre from "@dagrejs/dagre"
+import {Edge, MarkerType, Node as RFNode} from "@xyflow/react"
+import cloneDeep from "lodash-es/cloneDeep.js"
+
+import {AgentConversation} from "../AgentConversations"
+import {AgentNodeProps, FRONTMAN_SIZE_MULTIPLIER, NODE_HEIGHT, NODE_WIDTH} from "./AgentNode"
+import {AgentIconSuggestions} from "../../../controller/Types/AgentIconSuggestions"
+import {ConnectivityInfo} from "../../../generated/neuro-san/NeuroSanClient"
+import {cleanUpAgentName} from "../../../utils/AgentName"
+import {KNOWN_MESSAGE_TYPES_FOR_PLASMA} from "../../AgentChat/Common/Utils"
+import {BASE_RADIUS, DEFAULT_FRONTMAN_X_POS, DEFAULT_FRONTMAN_Y_POS, LEVEL_SPACING} from "../const"
+import {getFrontman, getParentAgents, getParents} from "./GraphStructure"
+import {isEditableAgent} from "../TemporaryNetworks"
+import {ThoughtBubbleEdgeShape} from "../ThoughtBubbles/ThoughtBubbleEdge"
+
+export const MAX_GLOBAL_THOUGHT_BUBBLES = 5
+
+const FRONTMAN_OFFSET_X = (NODE_WIDTH * (FRONTMAN_SIZE_MULTIPLIER - 1)) / 2
+const FRONTMAN_OFFSET_Y = (NODE_HEIGHT * (FRONTMAN_SIZE_MULTIPLIER - 1)) / 2
+
+/**
+ * Result of the layout algorithms, containing the nodes and edges with their computed positions and properties.
+ */
+export type LayoutResult = {
+    nodes: RFNode<AgentNodeProps>[]
+    edges: Edge[]
+}
+
+export const addThoughtBubbleEdge = (
+    thoughtBubbleEdges: Map<string, {edge: ThoughtBubbleEdgeShape; timestamp: number}>,
+    conversationId: string,
+    edge: ThoughtBubbleEdgeShape
+) => {
+    // Add with timestamp for age-based cleanup
+    thoughtBubbleEdges.set(conversationId, {
+        edge,
+        timestamp: Date.now(),
+    })
+
+    // Enforce max limit - remove oldest if over limit
+    if (thoughtBubbleEdges.size > MAX_GLOBAL_THOUGHT_BUBBLES) {
+        const entries = [...thoughtBubbleEdges.entries()]
+        const sorted = entries.sort((a, b) => a[1].timestamp - b[1].timestamp)
+        const toRemove = sorted.slice(0, sorted.length - MAX_GLOBAL_THOUGHT_BUBBLES)
+
+        toRemove.forEach(([id]) => {
+            thoughtBubbleEdges.delete(id)
+        })
+    }
+}
+
+const getThoughtBubbleEdges = (
+    thoughtBubbleEdges: Map<string, {edge: ThoughtBubbleEdgeShape; timestamp: number}>
+): ThoughtBubbleEdgeShape[] => {
+    return [...thoughtBubbleEdges.values()].map((item) => item.edge)
+}
+
+// Helper function for plasma edges to check if two agents are in the same conversation
+const areInSameConversation = (
+    conversations: AgentConversation[] | null,
+    sourceAgent: string,
+    targetAgent: string
+): boolean => {
+    if (!conversations) return false
+
+    return conversations
+        .filter((conversation) => KNOWN_MESSAGE_TYPES_FOR_PLASMA.includes(conversation.type))
+        .some((conversation) => conversation.agents.has(sourceAgent) && conversation.agents.has(targetAgent))
+}
+
+// #region: Constants
+
+// Name for custom node
+const AGENT_NODE_TYPE_NAME = "agentNode"
+
+// #endregion: Constants
+
+// Generates the properties for an edge in the graph.
+// Common for both radial and linear layouts.
+const getEdgeProperties = (
+    sourceId: string,
+    targetId: string,
+    sourceHandle: string,
+    targetHandle: string,
+    isAnimated: boolean
+): Edge => {
+    return {
+        animated: false,
+        id: `${targetId}-edge-${sourceId}`,
+        markerEnd: {type: MarkerType.ArrowClosed, width: 30, height: 30},
+        source: sourceId,
+        sourceHandle,
+        target: targetId,
+        targetHandle,
+        type: isAnimated ? "plasmaEdge" : undefined,
+    }
+}
+
+// An agent is editable if it belongs to a temporary network and is of an editable type.
+const isNodeEditable = (displayAs: string | undefined, isTemporaryNetwork: boolean): boolean =>
+    isTemporaryNetwork && isEditableAgent(displayAs)
+
+/** * Shared options for graph layout functions. */
+export type LayoutOptions = {
+    readonly agentCounts: Map<string, number>
+    readonly agentIconSuggestions?: AgentIconSuggestions | null
+    readonly agentsInNetwork: ConnectivityInfo[]
+    readonly currentConversations: AgentConversation[] | null
+    readonly isAgentNetworkDesignerMode: boolean
+    readonly isAwaitingLlm: boolean
+    readonly isTemporaryNetwork?: boolean
+    readonly thoughtBubbleEdges: Map<string, {edge: ThoughtBubbleEdgeShape; timestamp: number}>
+    readonly useNativeNames: boolean
+}
+
+export const layoutRadial = ({
+    agentCounts,
+    agentIconSuggestions = null,
+    agentsInNetwork,
+    currentConversations,
+    isAgentNetworkDesignerMode,
+    isAwaitingLlm,
+    isTemporaryNetwork = false,
+    thoughtBubbleEdges,
+    useNativeNames,
+}: LayoutOptions): LayoutResult => {
+    const nodesInNetwork: RFNode<AgentNodeProps>[] = []
+    const edgesInNetwork: Edge[] = []
+
+    // Compute depth of each node using breadth-first traversal
+    const nodeDepths = new Map<string, number>()
+    const queue: {id: string; depth: number}[] = []
+
+    const parentAgents = getParentAgents(agentsInNetwork)
+
+    const frontman = getFrontman(agentsInNetwork)
+    if (frontman) {
+        // Add the frontman node to the network
+        queue.push({id: frontman.origin, depth: 0})
+        nodeDepths.set(frontman.origin, 0)
+    }
+
+    // Perform a breadth-first traversal of the tree to compute the depth of each node.
+    while (queue.length > 0) {
+        const {id: currentNodeId, depth} = queue.shift()
+
+        agentsInNetwork.forEach(({origin: nodeId}) => {
+            // For each node, check if it is a direct child of the  current node in the queue.
+            const parentIds = getParents(nodeId, parentAgents)
+            if (parentIds?.includes(currentNodeId) && !nodeDepths.has(nodeId)) {
+                // It's a child of the current node so set its depth to the depth of the current node + 1.
+                nodeDepths.set(nodeId, depth + 1)
+                queue.push({id: nodeId, depth: depth + 1})
+            }
+        })
+    }
+
+    // Construct a map where keys are depths and values are arrays of node IDs at that depth.
+    const nodesByDepth = new Map<number, string[]>()
+
+    nodeDepths.forEach((depth, nodeId) => {
+        if (!nodesByDepth.has(depth)) {
+            nodesByDepth.set(depth, [])
+        }
+        nodesByDepth.get(depth).push(nodeId)
+    })
+
+    // Assign layout positions based on depth & spread angles per level
+    // Use currentConversations for plasma edges and node highlighting (cleared at network end)
+
+    nodesByDepth.forEach((nodeIds, depth) => {
+        const radius = BASE_RADIUS + depth * LEVEL_SPACING
+        const angleStep = (2 * Math.PI) / nodeIds.length // Divide full circle among nodes at this level
+
+        nodeIds.forEach((nodeId, index) => {
+            const angle = index * angleStep // Spread nodes evenly in their depth level
+            const x = DEFAULT_FRONTMAN_X_POS + radius * Math.cos(angle)
+            const y = DEFAULT_FRONTMAN_Y_POS + radius * Math.sin(angle)
+
+            const isFrontman = frontman?.origin === nodeId
+
+            const displayAs = agentsInNetwork.find((a) => a.origin === nodeId)?.display_as
+
+            const parentNodes = getParents(nodeId, parentAgents)
+
+            // Create an edge from each parent node to this node
+            for (const parentNode of parentNodes) {
+                const graphNode = nodesInNetwork.find((node) => node.id === parentNode)
+                // Determine if the agent is left or right of its parent node for symmetrical layout
+                if (graphNode) {
+                    const dx = x - graphNode.position.x
+                    const dy = y - graphNode.position.y
+
+                    let sourceHandle: string
+                    let targetHandle: string
+
+                    // Determine the handle based on the direction of the node relative to its parent
+                    if (Math.abs(dx) > Math.abs(dy)) {
+                        // More horizontal: use left/right handles
+                        const isLeftOfParent = dx < 0
+                        sourceHandle = isLeftOfParent ? `${graphNode.id}-left-handle` : `${graphNode.id}-right-handle`
+                        targetHandle = isLeftOfParent ? `${nodeId}-right-handle` : `${nodeId}-left-handle`
+                    } else {
+                        // More vertical: use top/bottom handles
+                        const isAboveParent = dy < 0
+                        sourceHandle = isAboveParent ? `${graphNode.id}-top-handle` : `${graphNode.id}-bottom-handle`
+                        targetHandle = isAboveParent ? `${nodeId}-bottom-handle` : `${nodeId}-top-handle`
+                    }
+
+                    // Plasma edges based on currentConversations (live, cleared at network end)
+                    const isEdgeAnimated = areInSameConversation(currentConversations, nodeId, graphNode.id)
+
+                    // Add edge from parent to node.
+                    // We always show animated edges, all edges when in "idle mode" (not awaiting LLM),
+                    // and all edges in the designer mode preview.
+                    if (!isAwaitingLlm || isAgentNetworkDesignerMode || isEdgeAnimated) {
+                        edgesInNetwork.push(
+                            getEdgeProperties(graphNode.id, nodeId, sourceHandle, targetHandle, isEdgeAnimated)
+                        )
+                    }
+                }
+            }
+
+            nodesInNetwork.push({
+                id: nodeId,
+                type: AGENT_NODE_TYPE_NAME,
+                data: {
+                    agentCounts,
+                    agentName: useNativeNames ? nodeId : cleanUpAgentName(nodeId),
+                    depth,
+                    displayAs,
+                    // Use current conversations for node highlighting (cleared at end)
+                    getConversations: () => currentConversations,
+                    isAwaitingLlm,
+                    agentIconSuggestion: agentIconSuggestions?.[nodeId],
+                    isEditable: isNodeEditable(displayAs, isTemporaryNetwork),
+                },
+                // position: allow for Frontman being larger
+                position: isFrontman
+                    ? {x: DEFAULT_FRONTMAN_X_POS - FRONTMAN_OFFSET_X, y: DEFAULT_FRONTMAN_Y_POS - FRONTMAN_OFFSET_Y}
+                    : {x, y},
+                style: {
+                    border: "none",
+                    background: "transparent",
+                    boxShadow: "none",
+                    padding: 0,
+                    margin: 0,
+                },
+            })
+        })
+    })
+
+    // Add thought bubble edges from cache to avoid duplicates across layout recalculations
+    const bubbleEdges = getThoughtBubbleEdges(thoughtBubbleEdges)
+    const thoughtBubbleEdgesToAdd = bubbleEdges.filter((edge: ThoughtBubbleEdgeShape) =>
+        edgesInNetwork.every((existing: Edge) => existing.id !== edge.id && edge.type === "thoughtBubbleEdge")
+    )
+
+    edgesInNetwork.push(...thoughtBubbleEdgesToAdd)
+
+    return {nodes: nodesInNetwork, edges: edgesInNetwork}
+}
+
+export const layoutLinear = ({
+    agentCounts,
+    agentIconSuggestions = null,
+    agentsInNetwork,
+    currentConversations,
+    isAgentNetworkDesignerMode,
+    isAwaitingLlm,
+    isTemporaryNetwork = false,
+    thoughtBubbleEdges,
+    useNativeNames,
+}: LayoutOptions): LayoutResult => {
+    const nodesInNetwork: RFNode<AgentNodeProps>[] = []
+    const edgesInNetwork: Edge[] = []
+
+    // Do these calculations outside the loop for efficiency
+    const parentAgents = getParentAgents(agentsInNetwork)
+    const frontman = getFrontman(agentsInNetwork)
+
+    agentsInNetwork.forEach(({display_as: displayAs, origin: nodeId}) => {
+        const parentIds = getParents(nodeId, parentAgents)
+        const isFrontman = frontman?.origin === nodeId
+
+        nodesInNetwork.push({
+            id: nodeId,
+            type: AGENT_NODE_TYPE_NAME,
+            data: {
+                agentCounts,
+                agentName: useNativeNames ? nodeId : cleanUpAgentName(nodeId),
+                displayAs,
+                // Use current conversations for node highlighting (cleared at end)
+                getConversations: () => currentConversations,
+                isAwaitingLlm,
+                depth: undefined, // Depth will be computed later,
+                agentIconSuggestion: agentIconSuggestions?.[nodeId],
+                isEditable: isNodeEditable(displayAs, isTemporaryNetwork),
+            },
+            position: isFrontman ? {x: DEFAULT_FRONTMAN_X_POS, y: DEFAULT_FRONTMAN_Y_POS} : {x: 0, y: 0},
+            style: {
+                border: "none",
+                background: "transparent",
+                boxShadow: "none",
+                padding: 0,
+                margin: 0,
+            },
+        })
+
+        if (!isFrontman) {
+            for (const parentNode of parentIds) {
+                // Add edges from parents to node
+                const isEdgeAnimated = areInSameConversation(currentConversations, parentNode, nodeId)
+
+                // Include all edges here, since dagre needs them to compute the layout correctly.
+                // We will filter them later if we're in "awaiting LLM" mode.
+                edgesInNetwork.push(
+                    getEdgeProperties(
+                        parentNode,
+                        nodeId,
+                        `${parentNode}-right-handle`,
+                        `${nodeId}-left-handle`,
+                        isEdgeAnimated
+                    )
+                )
+            }
+        }
+    })
+
+    // Add thought bubble edges from cache to avoid duplicates across layout recalculations
+    const bubbleEdges = getThoughtBubbleEdges(thoughtBubbleEdges)
+    const thoughtBubbleEdgesToAdd = bubbleEdges.filter((edge: Edge) =>
+        edgesInNetwork.every((existing: Edge) => existing.id !== edge.id && edge.type === "thoughtBubbleEdge")
+    )
+
+    edgesInNetwork.push(...thoughtBubbleEdgesToAdd)
+
+    const dagreGraph = new dagre.graphlib.Graph()
+    dagreGraph.setDefaultEdgeLabel(() => ({}))
+
+    // Configure for left-to-right layout
+    dagreGraph.setGraph({rankdir: "LR"})
+
+    // Don't want to update nodes directly in existing flow so make a copy
+    const nodesTmp = cloneDeep(nodesInNetwork)
+
+    nodesTmp.forEach((node) => {
+        dagreGraph.setNode(node.id, {width: NODE_WIDTH, height: NODE_HEIGHT})
+    })
+
+    // Add edges to the dagre graph
+    edgesInNetwork.forEach((edge) => {
+        dagreGraph.setEdge(edge.source, edge.target)
+    })
+
+    // Compute the layout using dagre
+    dagre.layout(dagreGraph)
+
+    // Get x positions for the nodes in nodesTmp. Keep only unique values and sort numerically
+    const xPositions = [...new Set(nodesTmp.map((node) => dagreGraph.node(node.id).x))].sort((a, b) => a - b)
+
+    // Convert dagre's layout to what our flow graph needs
+    nodesTmp.forEach((node) => {
+        const nodeWithPosition = dagreGraph.node(node.id)
+        const isFrontman = frontman?.origin === node.id
+
+        // We are shifting the dagre node position (anchor=center) to the top left
+        // so it matches the React Flow node anchor point (top left).
+        const x = nodeWithPosition.x - NODE_WIDTH / 2 - (isFrontman ? FRONTMAN_OFFSET_X : 0)
+        const y = nodeWithPosition.y - NODE_HEIGHT / 2 - (isFrontman ? FRONTMAN_OFFSET_Y : 0)
+        node.position = {
+            x,
+            y,
+        }
+
+        // Depth is index of x position in xPositions array
+        // Create a new data object with updated depth
+        node.data = {
+            ...node.data,
+            depth: xPositions.indexOf(nodeWithPosition.x),
+        }
+    })
+
+    // If we're in "awaiting LLM" mode, but not Agent Network Designer mode, we filter edges to only include those
+    // that are between conversation agents. Use currentConversations (plasma edges are live and clear at network end)
+    const filteredEdges =
+        isAwaitingLlm && !isAgentNetworkDesignerMode
+            ? edgesInNetwork.filter((edge) => areInSameConversation(currentConversations, edge.source, edge.target))
+            : edgesInNetwork
+
+    // Add thought bubble edges from cache to avoid duplicates across layout recalculations
+    const globalBubbleEdges = getThoughtBubbleEdges(thoughtBubbleEdges)
+    const thoughtBubbles = globalBubbleEdges.filter((edge: ThoughtBubbleEdgeShape) =>
+        filteredEdges.every((existing: Edge) => existing.id !== edge.id)
+    )
+
+    filteredEdges.push(...thoughtBubbles)
+
+    return {nodes: nodesTmp, edges: filteredEdges}
+}
