@@ -16,6 +16,7 @@ import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from ai_settings import domain_theme, setting
+from civic_context import official_service
 from pyhocon import ConfigFactory
 from pydantic import BaseModel, Field
 
@@ -241,6 +242,11 @@ async def run_turn(key, turn_id):
                   "Answer the customer's request directly.\n\nCustomer message:\n" + row["message"])
         if row["language"] in ("Telugu","Hindi","English"):
             prompt += "\nReply concisely in " + row["language"] + "."
+        source = await official_service(profile,row["message"])
+        if source:
+            prompt += "\nVerified public-service directory result: "+json.dumps(source,ensure_ascii=False)+". Use this source; refer applications and decisions to the responsible office."
+            with database() as db:
+                db.execute("INSERT OR REPLACE INTO turn_activity VALUES(?,?)",(turn_id,"Service directory → "+source["department"]))
         payload = {"user_message":{"type":"HUMAN","text":prompt}, "chat_filter":{"chat_filter_type":"MAXIMAL"}}
         if row["context"]:
             payload["chat_context"] = json.loads(row["context"])
@@ -262,6 +268,8 @@ async def run_turn(key, turn_id):
                         context = message.get("chat_context") or context
         if not answer:
             raise ValueError("Missing final answer")
+        if source and source["url"] not in answer:
+            answer += "\n\n"+source["title"]+" · "+source["url"]
         with database() as db:
             if context:
                 db.execute("UPDATE sessions SET context=? WHERE id=?", (json.dumps(context), row["session"]))

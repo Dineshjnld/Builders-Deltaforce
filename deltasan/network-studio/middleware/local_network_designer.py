@@ -12,7 +12,7 @@ from langchain.agents.middleware.types import hook_config
 from langchain_core.messages import AIMessage, HumanMessage
 from pyhocon import ConfigFactory
 from middleware.design_brief import collect, GREETING, BUILD, localize
-from decision_model import predict
+from middleware.connectors import select_tools
 from neuro_san_studio.agent_network_designer.middleware.agent_network_definition_middleware import (
     AgentNetworkDefinitionMiddleware,
 )
@@ -48,6 +48,7 @@ class LocalNetworkDesigner(AgentNetworkDefinitionMiddleware):
                         name = unquote(saved.group(1))
                         file = Path("registries",name+".studio")
                         if file.is_file():
+                            data.pop("revision",None)
                             data.update(studio_network=name,studio_graph=json.loads(file.read_text(encoding="utf8")),brief_dirty=False)
         message = messages[last_user].text
         graph = data.get("studio_graph")
@@ -84,23 +85,7 @@ class LocalNetworkDesigner(AgentNetworkDefinitionMiddleware):
                     design.raise_for_status()
                     graph = design.json()["graph"]
                     await self.activity("Network architect","Connector selector",f"Submitted {len(graph['agents'])} role assignments for tool selection.")
-                    inputs = (data.get("design_brief") or {}).get("inputs","")
-                    offline = bool(re.search(r"chat[ -]only|no (?:tools|integrations|connectors)", inputs, re.I))
-                    choices = []
-                    if offline:
-                        for agent in graph["agents"]: agent["tools"] = []
-                    else:
-                        for agent in graph["agents"]:
-                            route, score = predict(agent["task"])
-                            if route != "none":
-                                choices.append((score,route,agent))
-                        goal = (data.get("design_brief") or {}).get("goal",design_input)
-                        route, score = predict(goal)
-                        if route != "none" and not any(k==route for _,k,_ in choices):
-                            choices.append((score,route,graph["agents"][0]))
-                        for _,route,agent in sorted(choices,key=lambda item:-item[0]):
-                            if not any(route in a["tools"] for a in graph["agents"]):
-                                agent["tools"].append(route)
+                    select_tools(graph, data.get("design_brief") or {}, design_input, data.get("studio_graph"))
                     bindings = [a["name"]+" → "+", ".join(a["tools"]) for a in graph["agents"] if a["tools"]]
                     await self.activity("Connector selector","Graph validator","; ".join(bindings) if bindings else "No external tools assigned.")
                     agents = {a["id"]: a["name"] for a in graph["agents"]}
@@ -117,6 +102,7 @@ class LocalNetworkDesigner(AgentNetworkDefinitionMiddleware):
                     await self.activity("Graph validator","Studio registry","Validated connections and saved the network definition.")
                     network = saved.json()["network"]
                     data.update(studio_graph=graph, studio_network=network, brief_dirty=False)
+                    data.pop("revision",None)
                     # DeltaSAN watches the root manifest, which includes the Studio registry.
                     Path("registries/manifest.hocon").touch(exist_ok=True)
                 url = "/api/v1/" + quote(network, safe="/") + "/connectivity"

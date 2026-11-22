@@ -34,14 +34,19 @@ def collect(data, message):
     """Return (chat reply, confirmed design input). Only confirmation can produce input."""
     brief = dict(data.get("design_brief") or {})
     text = message.strip()
+    spoken_edit = re.fullmatch(r"(?:please\s+)?(?:set|change|update|revise)\s+(?:the\s+)?(goal|audience|inputs?|outcome)\s+(?:to|as)\s+(.+)", text, re.I | re.S)
+    if spoken_edit:
+        field = spoken_edit.group(1).lower()
+        text = ("inputs" if field == "input" else field) + ": " + spoken_edit.group(2)
     command = text.casefold().strip(".!? ")
     if command in {"start over", "new agent", "new network"}:
-        for key in ("studio_graph", "studio_network", "design_brief", "brief_confirmable", "brief_dirty"):
+        for key in ("studio_graph", "studio_network", "design_brief", "brief_confirmable", "brief_dirty", "revision"):
             data.pop(key, None)
         return FIELDS["goal"], None
     missing = next((field for field in FIELDS if not brief.get(field)), None)
     if BUILD.fullmatch(text) and data.get("brief_confirmable") and not missing:
-        return None, "\n".join(f"{field}: {brief[field]}" for field in FIELDS)
+        description = "\n".join(f"{field}: {brief[field]}" for field in FIELDS)
+        return None, description + ("\nRequested changes: "+data["revision"] if data.get("revision") else "")
     if GREETING.fullmatch(text) or BUILD.fullmatch(text) or not text:
         return ("Hello! " if not brief else "") + (FIELDS[missing] if missing else summary(brief)), None
     if re.fullmatch(r"(?:what can you do|how does (?:this|it) work|can you help(?: me)?)\??",text,re.I):
@@ -54,6 +59,9 @@ def collect(data, message):
         if missing == "goal" and (len(text) < 8 or command in {"build an agent", "build a network", "create an agent", "help me", "make an agent"}):
             return FIELDS["goal"], None
         brief[missing] = text[:1500]
+    elif data.get("studio_network") and re.match(r"(?:please\s+)?(?:add|remove|rename|connect|disconnect|replace|revise|edit|change|update)\b",text,re.I):
+        data.update(revision=text[:1400], brief_dirty=True)
+        return "Proposed network edit: "+text+"\n\nSay **build it** to save a revised network.", None
     else:
         return "Which requirement should change? Send Goal:, Audience:, Inputs:, or Outcome: followed by the change.\n\n" + summary(brief), None
     data["design_brief"] = brief
